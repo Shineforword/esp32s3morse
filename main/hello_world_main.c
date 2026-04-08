@@ -12,6 +12,28 @@
 #include "esp_log.h"
 #include "led_strip.h"
 
+static void hsv_to_rgb_u8(uint16_t hue_deg, uint8_t sat, uint8_t val,
+                          uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    // hue: [0, 359], sat/val: [0, 255]
+    // 这里用整数算法避免引入浮点开销，足够驱动板载 WS2812 做平滑彩虹渐变。
+    const uint8_t region = (hue_deg / 60) % 6;      // 0..5
+    const uint16_t rem = (hue_deg % 60) * 255 / 60; // 0..255
+
+    const uint16_t p = ((uint16_t)val * (255 - sat)) / 255;
+    const uint16_t q = ((uint16_t)val * (255 - ((uint16_t)sat * rem) / 255)) / 255;
+    const uint16_t t = ((uint16_t)val * (255 - ((uint16_t)sat * (255 - rem)) / 255)) / 255;
+
+    switch (region) {
+        case 0: *r = val; *g = (uint8_t)t; *b = (uint8_t)p; break;
+        case 1: *r = (uint8_t)q; *g = val; *b = (uint8_t)p; break;
+        case 2: *r = (uint8_t)p; *g = val; *b = (uint8_t)t; break;
+        case 3: *r = (uint8_t)p; *g = (uint8_t)q; *b = val; break;
+        case 4: *r = (uint8_t)t; *g = (uint8_t)p; *b = val; break;
+        default:*r = val; *g = (uint8_t)p; *b = (uint8_t)q; break;
+    }
+}
+
 void app_main(void)
 {
     const char *TAG = "rgb";
@@ -51,23 +73,16 @@ void app_main(void)
     ESP_LOGI(TAG, "WS2812 init ok, gpio=%d", led_gpio);
 
     while (1) {
-        // 这里用最直观的“红→绿→蓝→灭”做自检：能循环变色说明 RMT 时序和数据脚都没问题。
-        led_strip_set_pixel(strip, 0, 255, 0, 0);
-        led_strip_refresh(strip);
-        vTaskDelay(pdMS_TO_TICKS(500));
+        // 彩虹渐变：Hue 0..359 循环。brightness/speed 都可以随手改着玩。
+        const uint8_t brightness = 40;        // 0..255（WS2812 很亮，建议先从 10~60 开始）
+        const TickType_t frame = pdMS_TO_TICKS(15); // 越小越平滑但更“快”
 
-        // Green
-        led_strip_set_pixel(strip, 0, 0, 255, 0);
-        led_strip_refresh(strip);
-        vTaskDelay(pdMS_TO_TICKS(500));
-
-        // Blue
-        led_strip_set_pixel(strip, 0, 0, 0, 255);
-        led_strip_refresh(strip);
-        vTaskDelay(pdMS_TO_TICKS(500));
-
-        // Off
-        led_strip_clear(strip);
-        vTaskDelay(pdMS_TO_TICKS(300));
+        for (uint16_t hue = 0; hue < 360; hue++) {
+            uint8_t r = 0, g = 0, b = 0;
+            hsv_to_rgb_u8(hue, 255, brightness, &r, &g, &b);
+            led_strip_set_pixel(strip, 0, r, g, b);
+            led_strip_refresh(strip);
+            vTaskDelay(frame);
+        }
     }
 }

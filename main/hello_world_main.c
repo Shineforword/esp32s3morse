@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: CC0-1.0
  *
- * SoftAP + 网页：短按/长按摩斯输入，红灯播放，常态绿灯；/ 字母间隔，// 单词间隔。
+ * SoftAP + 网页：短按/长按摩斯输入，红灯播放，常态黄灯；/ 字母间隔，// 单词间隔。
  */
 
 #include <stdio.h>
@@ -215,9 +215,9 @@ static void morse_play_red(led_strip_handle_t strip, const char *pattern, uint32
     }
 }
 
-static void led_idle_green(void)
+static void led_idle_yellow(void)
 {
-    rgb_set(s_strip, 0, LED_BRIGHT_IDLE, 0);
+    rgb_set(s_strip, LED_BRIGHT_IDLE, LED_BRIGHT_IDLE, 0);
 }
 
 /* 单个点/划的即时反馈（与整段播放共用 mutex，避免抢灯） */
@@ -228,14 +228,14 @@ static void preview_flash_symbol(char sym)
     vTaskDelay(pdMS_TO_TICKS(sym == '-' ? (u * 3) : u));
     rgb_off(s_strip);
     vTaskDelay(pdMS_TO_TICKS(u));
-    led_idle_green();
+    led_idle_yellow();
 }
 
 static void morse_player_task(void *arg)
 {
     (void)arg;
     play_msg_t msg;
-    led_idle_green();
+    led_idle_yellow();
 
     for (;;) {
         if (xQueueReceive(s_play_queue, &msg, portMAX_DELAY) != pdTRUE) {
@@ -244,7 +244,7 @@ static void morse_player_task(void *arg)
         ESP_LOGI(TAG, "play: %s", msg.pattern);
         xSemaphoreTake(s_led_mutex, portMAX_DELAY);
         morse_play_red(s_strip, msg.pattern, MORSE_UNIT_MS, LED_BRIGHT_PLAY);
-        led_idle_green();
+        led_idle_yellow();
         xSemaphoreGive(s_led_mutex);
     }
 }
@@ -309,7 +309,7 @@ static const char INDEX_HTML[] =
     "</style></head><body>"
     "<h1>摩斯控制</h1>"
     "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>，密码 <strong>" WIFI_PASS
-    "</strong>。绿常态；点/划时红灯闪一下反馈；点「发送播放」整段红灯。</p>"
+    "</strong>。黄常态；点/划时红灯闪一下反馈；点「发送播放」整段红灯。</p>"
     "<p class=\"hint\">大按钮：<strong>短按=点</strong>，<strong>长按=划</strong>（约≥280ms）。</p>"
     "<button type=\"button\" id=\"key\">按住发码（松开判定）</button>"
     "<div class=\"row\">"
@@ -555,44 +555,47 @@ static esp_err_t play_post_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    /* JSON 响应：简单转义 pattern 中的 " \ */
-    char esc[PATTERN_MAX * 2];
+    /* 大缓冲放静态区：httpd 任务默认栈 4KB，栈上 ~2.5KB 易溢出导致发送播放时死机 */
+    static char s_esc[PATTERN_MAX * 2];
+    static char s_dec_esc[128 * 2];
+    static char s_play_resp[1536];
+
     size_t ei = 0;
-    for (size_t i = 0; pattern[i] && ei + 2 < sizeof(esc); i++) {
+    for (size_t i = 0; pattern[i] && ei + 2 < sizeof(s_esc); i++) {
         if (pattern[i] == '"' || pattern[i] == '\\') {
-            esc[ei++] = '\\';
+            s_esc[ei++] = '\\';
         }
-        esc[ei++] = pattern[i];
+        s_esc[ei++] = pattern[i];
     }
-    esc[ei] = '\0';
+    s_esc[ei] = '\0';
 
-    char dec_esc[sizeof(decoded) * 2];
     ei = 0;
-    for (size_t i = 0; decoded[i] && ei + 2 < sizeof(dec_esc); i++) {
+    for (size_t i = 0; decoded[i] && ei + 2 < sizeof(s_dec_esc); i++) {
         if (decoded[i] == '"' || decoded[i] == '\\') {
-            dec_esc[ei++] = '\\';
+            s_dec_esc[ei++] = '\\';
         }
-        dec_esc[ei++] = decoded[i];
+        s_dec_esc[ei++] = decoded[i];
     }
-    dec_esc[ei] = '\0';
+    s_dec_esc[ei] = '\0';
 
-    char resp[1536];
-    int n = snprintf(resp, sizeof(resp),
-                     "{\"ok\":true,\"pattern\":\"%s\",\"decoded\":\"%s\"}", esc, dec_esc);
-    if (n < 0 || n >= (int)sizeof(resp)) {
+    int n = snprintf(s_play_resp, sizeof(s_play_resp),
+                     "{\"ok\":true,\"pattern\":\"%s\",\"decoded\":\"%s\"}", s_esc, s_dec_esc);
+    if (n < 0 || n >= (int)sizeof(s_play_resp)) {
         httpd_resp_set_status(req, "500 Internal Server Error");
         httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"response too long\"}");
         return ESP_OK;
     }
 
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, resp);
+    return httpd_resp_sendstr(req, s_play_resp);
 }
 
 static httpd_handle_t start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
+    /* 默认 4096：decode/play 等 handler 栈帧 + http_parser 易溢出 */
+    config.stack_size = 16384;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
@@ -654,5 +657,5 @@ void app_main(void)
     wifi_init_softap();
     start_webserver();
 
-    led_idle_green();
+    led_idle_yellow();
 }

@@ -18,7 +18,7 @@
 void morse_player_init(led_strip_handle_t strip);
 
 /**
- * 预览一个符号：红灯亮「点或划」对应时长，再恢复黄灯。
+ * 预览一个符号：点红灯、划绿灯，亮对应时长后再恢复黄灯。
  * @param sym  '.' 或 '-'
  * @return     true 已执行预览；false 表示互斥锁被占用（例如正在整段播放），未闪灯
  */

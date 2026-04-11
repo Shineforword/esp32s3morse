@@ -1,5 +1,5 @@
 /**
- * morse_player.c —— WS2812 上实现摩斯红灯播放、黄灯空闲、预览闪灯
+ * morse_player.c —— WS2812 摩斯：点红灯、划绿灯，空闲黄灯；预览与整段播放
  *
  * FreeRTOS 概念速查：
  *   - 队列（Queue）：任务间传「播放哪一条 pattern」；http 任务发，player 任务收。
@@ -45,10 +45,10 @@ static void rgb_off(led_strip_handle_t strip)
 }
 
 /**
- * 按标准摩斯节奏用红灯播放 pattern（阻塞式，直到播完）。
- * 与 morse_decode 使用相同的 '/'、'//' 分隔语义。
+ * 按标准摩斯节奏播放 pattern（阻塞式，直到播完）。
+ * 点(.)亮红，划(-)亮绿；与 morse_decode 使用相同的 '/'、'//' 分隔语义。
  */
-static void morse_play_red(led_strip_handle_t strip, const char *pattern, uint32_t unit_ms, uint8_t brightness)
+static void morse_play_pattern(led_strip_handle_t strip, const char *pattern, uint32_t unit_ms, uint8_t brightness)
 {
     const char *s = pattern;
     while (*s == '/') {
@@ -74,7 +74,11 @@ static void morse_play_red(led_strip_handle_t strip, const char *pattern, uint32
                 if (*u != '.' && *u != '-') {
                     continue;
                 }
-                rgb_set(strip, brightness, 0, 0);
+                if (*u == '.') {
+                    rgb_set(strip, brightness, 0, 0);
+                } else {
+                    rgb_set(strip, 0, brightness, 0);
+                }
                 uint32_t on_ms = (*u == '-') ? (unit_ms * 3) : unit_ms;
                 vTaskDelay(pdMS_TO_TICKS(on_ms));
                 rgb_off(strip);
@@ -110,11 +114,15 @@ static void led_idle_yellow(void)
     rgb_set(s_strip, MORSE_LED_BRIGHT_IDLE, MORSE_LED_BRIGHT_IDLE, 0);
 }
 
-/** 单次输入反馈：亮一下红灯再回黄灯 */
+/** 单次输入反馈：点红灯、划绿灯，再回黄灯 */
 static void preview_flash_symbol(char sym)
 {
     const uint32_t u = MORSE_UNIT_MS;
-    rgb_set(s_strip, MORSE_LED_BRIGHT_PLAY, 0, 0);
+    if (sym == '.') {
+        rgb_set(s_strip, MORSE_LED_BRIGHT_PLAY, 0, 0);
+    } else {
+        rgb_set(s_strip, 0, MORSE_LED_BRIGHT_PLAY, 0);
+    }
     vTaskDelay(pdMS_TO_TICKS(sym == '-' ? (u * 3) : u));
     rgb_off(s_strip);
     vTaskDelay(pdMS_TO_TICKS(u));
@@ -136,7 +144,7 @@ static void morse_player_task(void *arg)
         }
         ESP_LOGI(TAG, "play: %s", msg.pattern);
         xSemaphoreTake(s_led_mutex, portMAX_DELAY);
-        morse_play_red(s_strip, msg.pattern, MORSE_UNIT_MS, MORSE_LED_BRIGHT_PLAY);
+        morse_play_pattern(s_strip, msg.pattern, MORSE_UNIT_MS, MORSE_LED_BRIGHT_PLAY);
         led_idle_yellow();
         xSemaphoreGive(s_led_mutex);
     }

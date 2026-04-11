@@ -321,33 +321,41 @@ static const char INDEX_HTML[] =
     "</div>"
     "<div class=\"hint\">当前摩斯串</div>"
     "<div id=\"pat\"></div>"
-    "<div class=\"hint\">解码（板端）</div>"
+    "<div class=\"hint\">实时解码（板端，随输入更新）</div>"
     "<div id=\"dec\"></div>"
     "<script>"
     "const T_DOT=280;"
     "let t0=0,buf='';"
     "const pat=document.getElementById('pat'),dec=document.getElementById('dec'),key=document.getElementById('key');"
     "function sync(){pat.textContent=buf||'(空)';}"
+    "function refreshDecode(){"
+    "if(!buf){dec.textContent='(空)';return;}"
+    "fetch('/api/decode',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({pattern:buf})}).then(function(r){return r.json();}).then(function(j){"
+    "if(j.ok){dec.textContent='实时: '+j.decoded;}else{dec.textContent='解码错误';}"
+    "}).catch(function(){});"
+    "}"
     "key.addEventListener('pointerdown',function(e){e.preventDefault();t0=performance.now();});"
     "key.addEventListener('pointerup',function(e){e.preventDefault();if(!t0)return;var d=performance.now()-t0;t0=0;"
     "var sym=(d<T_DOT)?'.':'-';buf+=sym;sync();"
     "fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({sym:sym})}).catch(function(){});});"
+    "body:JSON.stringify({sym:sym})}).catch(function(){});"
+    "refreshDecode();});"
     "key.addEventListener('pointercancel',function(){t0=0;});"
-    "document.getElementById('endL').onclick=function(){buf+='/';sync();};"
-    "document.getElementById('endW').onclick=function(){buf+='//';sync();};"
-    "document.getElementById('bs').onclick=function(){buf=buf.slice(0,-1);sync();};"
-    "document.getElementById('clr').onclick=function(){buf='';dec.textContent='';sync();};"
+    "document.getElementById('endL').onclick=function(){buf+='/';sync();refreshDecode();};"
+    "document.getElementById('endW').onclick=function(){buf+='//';sync();refreshDecode();};"
+    "document.getElementById('bs').onclick=function(){buf=buf.slice(0,-1);sync();refreshDecode();};"
+    "document.getElementById('clr').onclick=function(){buf='';sync();dec.textContent='(空)';};"
     "document.getElementById('send').onclick=async function(){"
     "if(!buf){dec.textContent='请先输入摩斯';return;}"
     "try{"
     "var r=await fetch('/api/play',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({pattern:buf})});"
     "var j=await r.json();"
-    "if(j.ok){dec.textContent='解码: '+j.decoded+' | 摩斯: '+j.pattern;}else{dec.textContent='错误: '+(j.error||'');}"
+    "if(j.ok){dec.textContent='已发送播放 | 解码: '+j.decoded+' | 摩斯: '+j.pattern;}else{dec.textContent='错误: '+(j.error||'');}"
     "}catch(e){dec.textContent='请求失败: '+e;}"
     "};"
-    "sync();"
+    "sync();dec.textContent='(空)';"
     "</script></body></html>";
 
 static bool json_extract_sym(const char *body, char *sym_out)
@@ -387,6 +395,10 @@ static bool json_extract_pattern(const char *body, char *out, size_t out_len)
         return false;
     }
     p++;
+    if (*p == '"') {
+        out[0] = '\0';
+        return true;
+    }
     size_t i = 0;
     while (*p && *p != '"' && i < out_len - 1) {
         if (*p == '\\' && p[1] == '"') {
@@ -402,7 +414,7 @@ static bool json_extract_pattern(const char *body, char *out, size_t out_len)
         out[i++] = *p++;
     }
     out[i] = '\0';
-    return i > 0;
+    return true;
 }
 
 static esp_err_t root_get_handler(httpd_req_t *req)
@@ -453,6 +465,54 @@ static esp_err_t preview_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+static esp_err_t decode_post_handler(httpd_req_t *req)
+{
+    char body[384] = {0};
+    int len = req->content_len;
+    if (len <= 0 || len >= (int)sizeof(body)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    int r = httpd_req_recv(req, body, len);
+    if (r <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+        return ESP_OK;
+    }
+    body[r] = '\0';
+
+    char pattern[PATTERN_MAX];
+    if (!json_extract_pattern(body, pattern, sizeof(pattern))) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no pattern\"}");
+        return ESP_OK;
+    }
+
+    char decoded[128];
+    decode_pattern(pattern, decoded, sizeof(decoded));
+
+    char dec_esc[sizeof(decoded) * 2];
+    size_t ei = 0;
+    for (size_t i = 0; decoded[i] && ei + 2 < sizeof(dec_esc); i++) {
+        if (decoded[i] == '"' || decoded[i] == '\\') {
+            dec_esc[ei++] = '\\';
+        }
+        dec_esc[ei++] = decoded[i];
+    }
+    dec_esc[ei] = '\0';
+
+    char resp[384];
+    int n = snprintf(resp, sizeof(resp), "{\"ok\":true,\"decoded\":\"%s\"}", dec_esc);
+    if (n < 0 || n >= (int)sizeof(resp)) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"response too long\"}");
+        return ESP_OK;
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, resp);
+}
+
 static esp_err_t play_post_handler(httpd_req_t *req)
 {
     char body[384] = {0};
@@ -474,6 +534,11 @@ static esp_err_t play_post_handler(httpd_req_t *req)
     if (!json_extract_pattern(body, pattern, sizeof(pattern))) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no pattern\"}");
+        return ESP_OK;
+    }
+    if (pattern[0] == '\0') {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"empty pattern\"}");
         return ESP_OK;
     }
 
@@ -537,6 +602,8 @@ static httpd_handle_t start_webserver(void)
         httpd_register_uri_handler(server, &fav);
         httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &preview);
+        httpd_uri_t decode = {.uri = "/api/decode", .method = HTTP_POST, .handler = decode_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &decode);
         httpd_uri_t play = {.uri = "/api/play", .method = HTTP_POST, .handler = play_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &play);
         ESP_LOGI(TAG, "HTTP server started");

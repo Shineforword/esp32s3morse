@@ -11,6 +11,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "esp_err.h"
@@ -39,6 +40,7 @@ typedef struct {
 
 static led_strip_handle_t s_strip;
 static QueueHandle_t s_play_queue;
+static SemaphoreHandle_t s_led_mutex;
 
 typedef struct {
     char ch;
@@ -218,6 +220,17 @@ static void led_idle_green(void)
     rgb_set(s_strip, 0, LED_BRIGHT_IDLE, 0);
 }
 
+/* 单个点/划的即时反馈（与整段播放共用 mutex，避免抢灯） */
+static void preview_flash_symbol(char sym)
+{
+    const uint32_t u = MORSE_UNIT_MS;
+    rgb_set(s_strip, LED_BRIGHT_PLAY, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(sym == '-' ? (u * 3) : u));
+    rgb_off(s_strip);
+    vTaskDelay(pdMS_TO_TICKS(u));
+    led_idle_green();
+}
+
 static void morse_player_task(void *arg)
 {
     (void)arg;
@@ -229,8 +242,10 @@ static void morse_player_task(void *arg)
             continue;
         }
         ESP_LOGI(TAG, "play: %s", msg.pattern);
+        xSemaphoreTake(s_led_mutex, portMAX_DELAY);
         morse_play_red(s_strip, msg.pattern, MORSE_UNIT_MS, LED_BRIGHT_PLAY);
         led_idle_green();
+        xSemaphoreGive(s_led_mutex);
     }
 }
 
@@ -294,7 +309,7 @@ static const char INDEX_HTML[] =
     "</style></head><body>"
     "<h1>摩斯控制</h1>"
     "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>，密码 <strong>" WIFI_PASS
-    "</strong>。绿常态；发送后红灯按摩斯闪烁。</p>"
+    "</strong>。绿常态；点/划时红灯闪一下反馈；点「发送播放」整段红灯。</p>"
     "<p class=\"hint\">大按钮：<strong>短按=点</strong>，<strong>长按=划</strong>（约≥280ms）。</p>"
     "<button type=\"button\" id=\"key\">按住发码（松开判定）</button>"
     "<div class=\"row\">"
@@ -315,7 +330,9 @@ static const char INDEX_HTML[] =
     "function sync(){pat.textContent=buf||'(空)';}"
     "key.addEventListener('pointerdown',function(e){e.preventDefault();t0=performance.now();});"
     "key.addEventListener('pointerup',function(e){e.preventDefault();if(!t0)return;var d=performance.now()-t0;t0=0;"
-    "buf+=(d<T_DOT)?'.':'-';sync();});"
+    "var sym=(d<T_DOT)?'.':'-';buf+=sym;sync();"
+    "fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({sym:sym})}).catch(function(){});});"
     "key.addEventListener('pointercancel',function(){t0=0;});"
     "document.getElementById('endL').onclick=function(){buf+='/';sync();};"
     "document.getElementById('endW').onclick=function(){buf+='//';sync();};"
@@ -332,6 +349,28 @@ static const char INDEX_HTML[] =
     "};"
     "sync();"
     "</script></body></html>";
+
+static bool json_extract_sym(const char *body, char *sym_out)
+{
+    const char *p = strstr(body, "\"sym\"");
+    if (!p) {
+        return false;
+    }
+    p = strchr(p, ':');
+    if (!p) {
+        return false;
+    }
+    p = strchr(p, '"');
+    if (!p) {
+        return false;
+    }
+    p++;
+    if ((*p == '.' || *p == '-') && p[1] == '"') {
+        *sym_out = *p;
+        return true;
+    }
+    return false;
+}
 
 static bool json_extract_pattern(const char *body, char *out, size_t out_len)
 {
@@ -379,9 +418,44 @@ static esp_err_t favicon_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, "", 0);
 }
 
+static esp_err_t preview_post_handler(httpd_req_t *req)
+{
+    char body[80] = {0};
+    int len = req->content_len;
+    if (len <= 0 || len >= (int)sizeof(body)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    int r = httpd_req_recv(req, body, len);
+    if (r <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+        return ESP_OK;
+    }
+    body[r] = '\0';
+
+    char sym = 0;
+    if (!json_extract_sym(body, &sym)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no sym\"}");
+        return ESP_OK;
+    }
+
+    if (xSemaphoreTake(s_led_mutex, 0) != pdTRUE) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"busy\":true}");
+    }
+    preview_flash_symbol(sym);
+    xSemaphoreGive(s_led_mutex);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
 static esp_err_t play_post_handler(httpd_req_t *req)
 {
-    char body[320] = {0};
+    char body[384] = {0};
     int len = req->content_len;
     if (len <= 0 || len >= (int)sizeof(body)) {
         httpd_resp_set_status(req, "400 Bad Request");
@@ -461,6 +535,8 @@ static httpd_handle_t start_webserver(void)
         httpd_register_uri_handler(server, &root);
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &fav);
+        httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &preview);
         httpd_uri_t play = {.uri = "/api/play", .method = HTTP_POST, .handler = play_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &play);
         ESP_LOGI(TAG, "HTTP server started");
@@ -494,6 +570,12 @@ void app_main(void)
 
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip));
     ESP_LOGI(TAG, "WS2812 ok gpio=%d", LED_GPIO);
+
+    s_led_mutex = xSemaphoreCreateMutex();
+    if (!s_led_mutex) {
+        ESP_LOGE(TAG, "mutex create failed");
+        return;
+    }
 
     s_play_queue = xQueueCreate(PLAY_QUEUE_LEN, sizeof(play_msg_t));
     if (!s_play_queue) {

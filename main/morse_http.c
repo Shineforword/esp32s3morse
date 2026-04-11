@@ -1,3 +1,14 @@
+/**
+ * morse_http.c —— ESP HTTP Server：主页 + /api/preview、/api/decode、/api/play
+ *
+ * 新手速览：
+ *   - httpd_req_t *req：代表「当前这一条 HTTP 请求」，读 body、设响应头、发 body 都用它。
+ *   - 每个 URI 对应一个 static esp_err_t xxx_handler(httpd_req_t *req)，在 morse_http_start 里注册。
+ *   - 本文件用极简手写方式解析 JSON（搜关键字），避免引入 cJSON 依赖；格式需与网页 JS 发送的一致。
+ *
+ * 栈空间注意：play 接口响应体可能较长，大缓冲使用 static，避免在 httpd 任务栈上分配导致溢出。
+ */
+
 #include "morse_http.h"
 
 #include "app_config.h"
@@ -13,6 +24,11 @@
 
 static const char *TAG = "morse_http";
 
+/*
+ * 内嵌网页：单个大字符串常量，编译进固件，无需 SPIFFS。
+ * WIFI_SSID / WIFI_PASS 来自 wifi_softap.h，与真实热点一致。
+ * 前端 JS 通过 fetch 调 POST /api/preview 等；大按钮用 pointerdown/up 时长区分点(.)与划(-)。
+ */
 static const char INDEX_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -82,6 +98,10 @@ static const char INDEX_HTML[] =
     "sync();dec.textContent='(空)';"
     "</script></body></html>";
 
+/**
+ * 从 POST body 里解析 {"sym":"."} 或 {"sym":"-"}。
+ * 非严格 JSON 解析器，仅适合本工程固定格式。
+ */
 static bool json_extract_sym(const char *body, char *sym_out)
 {
     const char *p = strstr(body, "\"sym\"");
@@ -104,6 +124,10 @@ static bool json_extract_sym(const char *body, char *sym_out)
     return false;
 }
 
+/**
+ * 从 POST body 解析 {"pattern":"...---..."}；支持 pattern 为空串 ""（两个引号紧挨）。
+ * 对 \\ " 与 \\ \\ 做简单转义，便于将来扩展。
+ */
 static bool json_extract_pattern(const char *body, char *out, size_t out_len)
 {
     const char *p = strstr(body, "\"pattern\"");
@@ -141,22 +165,29 @@ static bool json_extract_pattern(const char *body, char *out, size_t out_len)
     return true;
 }
 
+/** GET / → 返回内嵌 HTML，浏览器主页面 */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+/** GET /favicon.ico → 返回 204，减少浏览器反复请求时的无意义 404 日志 */
 static esp_err_t favicon_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "204 No Content");
     return httpd_resp_send(req, "", 0);
 }
 
+/**
+ * POST /api/preview —— 用户每输入一个点或划，网页调用；板子红灯闪一下作反馈。
+ * 若整段正在播放（互斥锁占用），返回 JSON busy，不闪灯。
+ */
 static esp_err_t preview_post_handler(httpd_req_t *req)
 {
     char body[80] = {0};
     int len = req->content_len;
+    /* content_len 由客户端 Content-Length 给出；防恶意超大 body 撑爆栈 */
     if (len <= 0 || len >= (int)sizeof(body)) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
@@ -186,6 +217,10 @@ static esp_err_t preview_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+/**
+ * POST /api/decode —— 仅解码，不播放；网页实时显示「当前摩斯串」对应的字母/数字。
+ * 响应里的 decoded 若含 " 或 \\，会先转义再拼进 JSON，避免格式断裂。
+ */
 static esp_err_t decode_post_handler(httpd_req_t *req)
 {
     char body[384] = {0};
@@ -213,6 +248,7 @@ static esp_err_t decode_post_handler(httpd_req_t *req)
     char decoded[128];
     morse_decode_pattern(pattern, decoded, sizeof(decoded));
 
+    /* 把 decoded 嵌入 JSON 字符串字段前，必须对 " 与 \\ 转义 */
     char dec_esc[sizeof(decoded) * 2];
     size_t ei = 0;
     for (size_t i = 0; decoded[i] && ei + 2 < sizeof(dec_esc); i++) {
@@ -234,6 +270,11 @@ static esp_err_t decode_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, resp);
 }
 
+/**
+ * POST /api/play —— 把整串摩斯加入播放队列，并立即返回 JSON（含解码结果）。
+ * 播放本身在 morse_player 任务里异步执行，本 handler 不必等灯闪完。
+ * s_esc / s_dec_esc / s_play_resp 用 static：避免在 httpd 默认栈上开大数组导致栈溢出死机。
+ */
 static esp_err_t play_post_handler(httpd_req_t *req)
 {
     char body[384] = {0};
@@ -310,10 +351,12 @@ void morse_http_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
+    /* 默认 4096 对 decode/play 等 handler + 解析器偏紧，提到 16K 更稳 */
     config.stack_size = 16384;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
+        /* user_ctx 可传自定义指针；本工程各 handler 不需要 */
         httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &root);
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};

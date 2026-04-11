@@ -1,3 +1,12 @@
+/**
+ * morse_player.c —— WS2812 上实现摩斯红灯播放、黄灯空闲、预览闪灯
+ *
+ * FreeRTOS 概念速查：
+ *   - 队列（Queue）：任务间传「播放哪一条 pattern」；http 任务发，player 任务收。
+ *   - 互斥锁（Mutex）：同一时刻只允许一个逻辑改灯（预览 OR 整段播放）。
+ *   - vTaskDelay：让出 CPU 并延时；用毫秒换算为 tick：pdMS_TO_TICKS(ms)。
+ */
+
 #include "morse_player.h"
 
 #include "app_config.h"
@@ -13,6 +22,7 @@
 
 static const char *TAG = "morse_play";
 
+/** 队列里每一项就是「待播放的一整串摩斯」 */
 typedef struct {
     char pattern[MORSE_PATTERN_MAX];
 } play_msg_t;
@@ -21,17 +31,23 @@ static led_strip_handle_t s_strip;
 static QueueHandle_t s_play_queue;
 static SemaphoreHandle_t s_led_mutex;
 
+/** 设置第 0 颗灯颜色并刷新到灯带（WS2812 需 refresh 才真正输出波形） */
 static void rgb_set(led_strip_handle_t strip, uint8_t r, uint8_t g, uint8_t b)
 {
     led_strip_set_pixel(strip, 0, r, g, b);
     led_strip_refresh(strip);
 }
 
+/** 关灯（全 0） */
 static void rgb_off(led_strip_handle_t strip)
 {
     led_strip_clear(strip);
 }
 
+/**
+ * 按标准摩斯节奏用红灯播放 pattern（阻塞式，直到播完）。
+ * 与 morse_decode 使用相同的 '/'、'//' 分隔语义。
+ */
 static void morse_play_red(led_strip_handle_t strip, const char *pattern, uint32_t unit_ms, uint8_t brightness)
 {
     const char *s = pattern;
@@ -68,6 +84,7 @@ static void morse_play_red(led_strip_handle_t strip, const char *pattern, uint32
             while (t < word_end && *t == '/') {
                 t++;
             }
+            /* 同单词内下一字母：再补 2 单位静音，与标准「字母间 3」一致（符号后已有 1） */
             if (t < word_end) {
                 vTaskDelay(pdMS_TO_TICKS(unit_ms * 2));
             }
@@ -80,17 +97,20 @@ static void morse_play_red(led_strip_handle_t strip, const char *pattern, uint32
         while (*s == '/') {
             s++;
         }
+        /* 单词间：再补 6 单位（符号间隔已占 1，共 7） */
         if (*s) {
             vTaskDelay(pdMS_TO_TICKS(unit_ms * 6));
         }
     }
 }
 
+/** 空闲态：黄灯（红绿等亮、蓝关） */
 static void led_idle_yellow(void)
 {
     rgb_set(s_strip, MORSE_LED_BRIGHT_IDLE, MORSE_LED_BRIGHT_IDLE, 0);
 }
 
+/** 单次输入反馈：亮一下红灯再回黄灯 */
 static void preview_flash_symbol(char sym)
 {
     const uint32_t u = MORSE_UNIT_MS;
@@ -101,6 +121,9 @@ static void preview_flash_symbol(char sym)
     led_idle_yellow();
 }
 
+/**
+ * 播放任务：死循环里阻塞读队列；收到消息后占锁、整段播放、恢复黄灯、释放锁。
+ */
 static void morse_player_task(void *arg)
 {
     (void)arg;
@@ -135,11 +158,13 @@ void morse_player_init(led_strip_handle_t strip)
         return;
     }
     xTaskCreate(morse_player_task, "morse_player", 4096, NULL, 5, NULL);
+    /* 任务可能稍后才跑到第一行 idle，这里先设一次黄灯，上电观感更一致 */
     led_idle_yellow();
 }
 
 bool morse_player_preview_symbol(char sym)
 {
+    /* 第二个参数 0：不等待，拿不到锁立刻返回 false（给 HTTP 返回 busy） */
     if (xSemaphoreTake(s_led_mutex, 0) != pdTRUE) {
         return false;
     }

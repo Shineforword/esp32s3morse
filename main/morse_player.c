@@ -1,5 +1,5 @@
 /**
- * morse_player.c —— WS2812 摩斯：点红灯、划绿灯，空闲黄灯；预览与整段播放
+ * morse_player.c —— WS2812 摩斯：点红灯、划绿灯，空闲黄灯；无源蜂鸣器与点划同步嘀嗒
  *
  * FreeRTOS 概念速查：
  *   - 队列（Queue）：任务间传「播放哪一条 pattern」；http 任务发，player 任务收。
@@ -10,6 +10,7 @@
 #include "morse_player.h"
 
 #include "app_config.h"
+#include "morse_buzzer.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -79,8 +80,10 @@ static void morse_play_pattern(led_strip_handle_t strip, const char *pattern, ui
                 } else {
                     rgb_set(strip, 0, brightness, 0);
                 }
+                morse_buzzer_on();
                 uint32_t on_ms = (*u == '-') ? (unit_ms * 3) : unit_ms;
                 vTaskDelay(pdMS_TO_TICKS(on_ms));
+                morse_buzzer_off();
                 rgb_off(strip);
                 vTaskDelay(pdMS_TO_TICKS(unit_ms));
             }
@@ -123,7 +126,9 @@ static void preview_flash_symbol(char sym)
     } else {
         rgb_set(s_strip, 0, MORSE_LED_BRIGHT_PLAY, 0);
     }
+    morse_buzzer_on();
     vTaskDelay(pdMS_TO_TICKS(sym == '-' ? (u * 3) : u));
+    morse_buzzer_off();
     rgb_off(s_strip);
     vTaskDelay(pdMS_TO_TICKS(u));
     led_idle_yellow();
@@ -136,6 +141,7 @@ static void morse_player_task(void *arg)
 {
     (void)arg;
     play_msg_t msg;
+    morse_buzzer_off();
     led_idle_yellow();
 
     for (;;) {
@@ -144,7 +150,9 @@ static void morse_player_task(void *arg)
         }
         ESP_LOGI(TAG, "play: %s", msg.pattern);
         xSemaphoreTake(s_led_mutex, portMAX_DELAY);
+        morse_buzzer_off();
         morse_play_pattern(s_strip, msg.pattern, MORSE_UNIT_MS, MORSE_LED_BRIGHT_PLAY);
+        morse_buzzer_off();
         led_idle_yellow();
         xSemaphoreGive(s_led_mutex);
     }
@@ -153,6 +161,8 @@ static void morse_player_task(void *arg)
 void morse_player_init(led_strip_handle_t strip)
 {
     s_strip = strip;
+
+    morse_buzzer_init();
 
     s_led_mutex = xSemaphoreCreateMutex();
     if (!s_led_mutex) {

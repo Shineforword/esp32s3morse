@@ -27,6 +27,22 @@
 #define MORSE_LED_BRIGHT_IDLE 25
 
 /**
+ * 无源蜂鸣器模块「I/O」脚所接 GPIO（与 WS2812 的 MORSE_LED_GPIO 分开）。
+ * 不用蜂鸣器时设为 -1，固件内不初始化 LEDC。
+ * 板子排针示例：GPIO4、GPIO5 等；勿占用灯带脚 48。
+ */
+#define MORSE_BUZZER_GPIO     4
+
+/** PWM 方波频率（Hz），无源蜂鸣器音调；约 1500～3000 较易听清。 */
+#define MORSE_BUZZER_FREQ_HZ  2000
+
+/**
+ * 1：低电平导通型模块（常见 NPN 三极管驱动，静音时引脚为高）。
+ * 0：高电平导通则设 0，并视实际声大小调节占空比。
+ */
+#define MORSE_BUZZER_ACTIVE_LOW 1
+
+/**
  * 「发送播放」请求排队长度。
  * 用户连续点发送时，每条命令先入队，播放任务依次消费；满则接口返回 queue full。
  */

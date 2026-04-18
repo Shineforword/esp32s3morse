@@ -1,5 +1,5 @@
 /**
- * morse_http.c —— ESP HTTP Server：主页 + /api/preview、/api/decode、/api/play
+ * morse_http.c —— ESP HTTP Server：卡片首页 /、/morse、/music + /api/tone 等
  *
  * 新手速览：
  *   - httpd_req_t *req：代表「当前这一条 HTTP 请求」，读 body、设响应头、发 body 都用它。
@@ -12,6 +12,7 @@
 #include "morse_http.h"
 
 #include "app_config.h"
+#include "morse_buzzer.h"
 #include "morse_decode.h"
 #include "morse_player.h"
 #include "wifi_softap.h"
@@ -25,11 +26,35 @@
 static const char *TAG = "morse_http";
 
 /*
- * 内嵌网页：单个大字符串常量，编译进固件，无需 SPIFFS。
- * WIFI_SSID / WIFI_PASS 来自 wifi_softap.h，与真实热点一致。
- * 前端 JS 通过 fetch 调 POST /api/preview 等；大按钮用 pointerdown/up 时长区分点(.)与划(-)。
+ * 内嵌网页：编译进固件。WIFI_SSID 来自 wifi_softap.h。
  */
-static const char INDEX_HTML[] =
+static const char DASHBOARD_HTML[] =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>功能</title>"
+    "<style>"
+    "body{font-family:system-ui,sans-serif;padding:16px;max-width:560px;margin:auto;background:#eef2f7;}"
+    "h1{font-size:1.35rem;color:#1a1a2e;}"
+    ".hint{color:#555;font-size:14px;}"
+    ".grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px;}"
+    "@media(min-width:480px){.grid{grid-template-columns:1fr 1fr;}}"
+    ".card{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.07);"
+    "text-decoration:none;color:inherit;display:block;border:1px solid #e1e4e8;transition:transform .08s;}"
+    ".card:active{transform:scale(0.98);}"
+    ".card h2{margin:0 0 8px;font-size:1.08rem;color:#0969da;}"
+    ".card p{margin:0;font-size:14px;color:#555;line-height:1.45;}"
+    ".card .go{font-size:12px;color:#888;margin-top:10px;}"
+    "</style></head><body>"
+    "<h1>功能</h1>"
+    "<p class=\"hint\">已连热点 <strong>" WIFI_SSID "</strong> 后，点卡片进入。</p>"
+    "<div class=\"grid\">"
+    "<a class=\"card\" href=\"/morse\"><h2>摩斯控制</h2>"
+    "<p>网页输入点划，灯点红划绿，蜂鸣器同步嘀嗒。</p><span class=\"go\">点击进入 →</span></a>"
+    "<a class=\"card\" href=\"/music\"><h2>七声简谱</h2>"
+    "<p>单音 1～7；《两只老虎》整曲（蜂鸣器简易版）。</p><span class=\"go\">点击进入 →</span></a>"
+    "</div></body></html>";
+
+static const char MORSE_PAGE_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
     "<title>Morse</title>"
@@ -47,6 +72,7 @@ static const char INDEX_HTML[] =
     "word-break:break-all;min-height:3.2em;white-space:pre-wrap;}"
     "#dec{font-size:18px;margin-top:10px;padding:10px;background:#fff;border-radius:10px;border:1px solid #ddd;}"
     "</style></head><body>"
+    "<p class=\"nav\" style=\"margin:0 0 10px\"><a href=\"/\">← 功能首页</a></p>"
     "<h1>摩斯控制</h1>"
     "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>，密码 <strong>" WIFI_PASS
     "</strong>。黄常态；点红灯、划绿灯闪一下反馈；点「发送播放」整段按点红划绿播放；接无源蜂鸣器时同步嘀嗒声。</p>"
@@ -97,6 +123,73 @@ static const char INDEX_HTML[] =
     "};"
     "sync();dec.textContent='(空)';"
     "</script></body></html>";
+
+static const char MUSIC_PAGE_HTML[] =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>七声</title>"
+    "<style>"
+    "body{font-family:system-ui,sans-serif;padding:16px;max-width:520px;margin:auto;background:#f6f7fb;}"
+    "h1{font-size:1.25rem;color:#222;}"
+    ".nav{margin-bottom:12px;font-size:15px;}"
+    ".hint{color:#555;font-size:14px;line-height:1.5;margin-bottom:14px;}"
+    ".keys{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;}"
+    ".keys button{width:64px;height:64px;border-radius:12px;border:none;font-size:20px;font-weight:700;"
+    "background:#238636;color:#fff;touch-action:manipulation;}"
+    ".keys button:active{background:#196f2e;}"
+    ".melodies{margin-top:20px;display:flex;flex-direction:column;gap:10px;}"
+    ".melodies button{width:100%;padding:14px 16px;font-size:16px;border:none;border-radius:12px;"
+    "font-weight:600;touch-action:manipulation;color:#fff;}"
+    ".melodies button#tiger{background:#d97706;}"
+    ".melodies button#tiger:active{background:#b45309;}"
+    ".melodies button:disabled{opacity:.55;}"
+    "</style></head><body>"
+    "<p class=\"nav\"><a href=\"/\">← 功能首页</a></p>"
+    "<h1>七声简谱</h1>"
+    "<p class=\"hint\">按 1～7 发单音（板载蜂鸣器）。下方可播放《两只老虎》整曲（七声近似）。摩斯正在播时可能排队或忙。</p>"
+    "<div class=\"keys\" id=\"k\"></div>"
+    "<div class=\"melodies\">"
+    "<button type=\"button\" id=\"tiger\">播放《两只老虎》</button>"
+    "</div>"
+    "<script>"
+    "var k=document.getElementById('k');"
+    "for(var n=1;n<=7;n++){"
+    "(function(note){var b=document.createElement('button');b.textContent=note;b.type='button';"
+    "b.onclick=function(){"
+    "fetch('/api/tone',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({note:note})}).then(function(r){return r.json();}).then(function(j){"
+    "if(!j.ok&&j.busy)b.style.opacity='0.5';setTimeout(function(){b.style.opacity='1';},120);"
+    "}).catch(function(){});};k.appendChild(b);})(n);}"
+    "async function playMelody(url,b){b.disabled=true;try{var r=await fetch(url,{method:'POST',"
+    "headers:{'Content-Type':'application/json'},body:'{}'});var j=await r.json();"
+    "if(!j.ok&&j.busy)b.style.opacity='0.6';setTimeout(function(){b.style.opacity='1';},200);}"
+    "catch(e){}b.disabled=false;}"
+    "document.getElementById('tiger').onclick=function(){playMelody('/api/play_twotigers',this);};"
+    "</script></body></html>";
+
+/**
+ * 解析 JSON 体 {\"note\":3} 或 {\"note\": 7}，note 为 1～7。
+ */
+static bool json_extract_note(const char *body, int *note_out)
+{
+    const char *p = strstr(body, "\"note\"");
+    if (!p) {
+        return false;
+    }
+    p = strchr(p, ':');
+    if (!p) {
+        return false;
+    }
+    p++;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p < '1' || *p > '7') {
+        return false;
+    }
+    *note_out = *p - '0';
+    return true;
+}
 
 /**
  * 从 POST body 里解析 {"sym":"."} 或 {"sym":"-"}。
@@ -165,11 +258,85 @@ static bool json_extract_pattern(const char *body, char *out, size_t out_len)
     return true;
 }
 
-/** GET / → 返回内嵌 HTML，浏览器主页面 */
+/** GET / → 卡片功能首页 */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+/** GET /morse → 摩斯控制页 */
+static esp_err_t morse_page_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, MORSE_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+/** GET /music → 七声简谱页 */
+static esp_err_t music_page_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, MUSIC_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+/** POST /api/tone body: {\"note\":1..7}，蜂鸣器播单音 */
+static esp_err_t tone_post_handler(httpd_req_t *req)
+{
+    char body[64] = {0};
+    int len = req->content_len;
+    if (len <= 0 || len >= (int)sizeof(body)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    int r = httpd_req_recv(req, body, len);
+    if (r <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+        return ESP_OK;
+    }
+    body[r] = '\0';
+
+    int note = 0;
+    if (!json_extract_note(body, &note)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad note\"}");
+        return ESP_OK;
+    }
+
+    if (!morse_buzzer_play_scale_note((uint8_t)note, 0)) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"busy\":true}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/** POST /api/play_twotigers —— 蜂鸣器播完整《两只老虎》（约数秒，占蜂鸣器互斥） */
+static esp_err_t twotigers_post_handler(httpd_req_t *req)
+{
+    int len = req->content_len;
+    if (len < 0 || len > 128) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    if (len > 0) {
+        char drain[128];
+        int r = httpd_req_recv(req, drain, len > (int)sizeof(drain) - 1 ? (int)sizeof(drain) - 1 : len);
+        if (r <= 0) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+            return ESP_OK;
+        }
+    }
+
+    if (!morse_buzzer_play_two_tigers()) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"busy\":true}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
 /** GET /favicon.ico → 返回 204，减少浏览器反复请求时的无意义 404 日志 */
@@ -359,8 +526,16 @@ void morse_http_start(void)
         /* user_ctx 可传自定义指针；本工程各 handler 不需要 */
         httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &root);
+        httpd_uri_t morse_page = {.uri = "/morse", .method = HTTP_GET, .handler = morse_page_get_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &morse_page);
+        httpd_uri_t music_page = {.uri = "/music", .method = HTTP_GET, .handler = music_page_get_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &music_page);
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &fav);
+        httpd_uri_t tone = {.uri = "/api/tone", .method = HTTP_POST, .handler = tone_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &tone);
+        httpd_uri_t twotigers = {.uri = "/api/play_twotigers", .method = HTTP_POST, .handler = twotigers_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &twotigers);
         httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &preview);
         httpd_uri_t decode = {.uri = "/api/decode", .method = HTTP_POST, .handler = decode_post_handler, .user_ctx = NULL};

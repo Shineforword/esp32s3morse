@@ -141,7 +141,7 @@ static void morse_player_task(void *arg)
 {
     (void)arg;
     play_msg_t msg;
-    morse_buzzer_off();
+    morse_buzzer_force_idle();
     led_idle_yellow();
 
     for (;;) {
@@ -150,9 +150,9 @@ static void morse_player_task(void *arg)
         }
         ESP_LOGI(TAG, "play: %s", msg.pattern);
         xSemaphoreTake(s_led_mutex, portMAX_DELAY);
-        morse_buzzer_off();
+        morse_buzzer_force_idle();
         morse_play_pattern(s_strip, msg.pattern, MORSE_UNIT_MS, MORSE_LED_BRIGHT_PLAY);
-        morse_buzzer_off();
+        morse_buzzer_force_idle();
         led_idle_yellow();
         xSemaphoreGive(s_led_mutex);
     }

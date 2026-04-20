@@ -17,6 +17,7 @@
  */
 
 #include "app_config.h"
+#include "lcd_st7789.h"
 #include "morse_http.h"
 #include "morse_player.h"
 #include "wifi_softap.h"
@@ -46,6 +47,11 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    /* ---------- TFT ST7789（SPI，与下面外设独立）---------- */
+    if (lcd_st7789_init_and_show_hello() != ESP_OK) {
+        ESP_LOGW(TAG, "LCD 未就绪，请检查 app_config.h 引脚与接线");
+    }
 
     /* ---------- WS2812 灯带（RMT 驱动）---------- */
     led_strip_handle_t strip;

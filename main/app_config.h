@@ -50,3 +50,58 @@
 
 /** 网页/API 传入的摩斯字符串最大长度（含结尾 \\0 前的字符）。超长会被截断或拒绝，视各接口校验而定。 */
 #define MORSE_PATTERN_MAX     256
+
+/* -------------------------------------------------------------------------- */
+/* TFT ST7789（SPI 8 线：GND VCC SCL SDA RES DC CS BLK）                        */
+/* 与 MORSE_LED_GPIO(48)、MORSE_BUZZER_GPIO(4) 勿复用引脚。                    */
+/* -------------------------------------------------------------------------- */
+
+/** SPI 主机：与 Wi‑Fi 等外设共用 SPI 时注意冲突；本工程默认用 SPI2。 */
+#define LCD_SPI_HOST SPI2_HOST
+
+/** 屏 SCL → ESP32 SPI CLK；屏 SDA → MOSI */
+#define LCD_PIN_SCLK 12
+#define LCD_PIN_MOSI 11
+
+/** RES / DC / CS */
+#define LCD_PIN_RST 14
+#define LCD_PIN_DC  13
+#define LCD_PIN_CS  10
+
+/**
+ * 背光已由模块接 3V3 常亮：保持 -1。
+ * 若背光接某 GPIO，填该脚并在 lcd_st7789.c 里拉高（当前未实现，可自行加 gpio_set_level）。
+ */
+#define LCD_PIN_BLK_GPIO (-1)
+
+/** 本屏可视区 240×280（竖屏：宽 240、高 280）。 */
+#define LCD_H_RES 240
+#define LCD_V_RES 280
+
+/** 杜邦线较长或黑屏时可降到 20M；仍不行再试 10M */
+#define LCD_PIXEL_CLOCK_HZ (20 * 1000 * 1000)
+
+/** 多数 240×280 在 ST7789 的 320 行窗口内可视区从约第 20 行开始，黑屏只有背光时先试 Y=20 */
+#define LCD_GAP_X 0
+#define LCD_GAP_Y 20
+
+/** SPI 模式：多数小板用 3；仍黑屏可改 0 试 */
+#define LCD_SPI_MODE 3
+
+/**
+ * RGB565 RAM 字节序：1=小端（与多数 SPI 例程一致）；黑屏可改 0 试大端
+ */
+#define LCD_RGB565_LITTLE_ENDIAN 1
+
+/** 1=BGR 顺序；偏红蓝反了时试 1 */
+#define LCD_ST7789_BGR 0
+
+/** 颜色反相：黑屏可先关 0；整屏反色再开 1 */
+#define LCD_INVERT_COLOR 0
+
+/** 横竖交换：方向不对改 0/1 */
+#define LCD_SWAP_XY 0
+
+/** 镜像：左右/上下反了把 0 改成 1 试 */
+#define LCD_MIRROR_X 0
+#define LCD_MIRROR_Y 0

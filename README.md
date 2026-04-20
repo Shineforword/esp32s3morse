@@ -9,10 +9,24 @@
 - **内置网页**：短按大按钮 = 点（·），长按（≥280ms）= 划（—）；另有「字母间 /」「单词间 //」「退格」「清空」「发送播放」
 - **灯效**：常态 **黄灯**；**每输入一个点/划**会请求 `POST /api/preview`，板子 **点红灯、划绿灯** 闪一下（与整段播放互斥）；点「发送播放」后整段 **点红划绿** 按摩斯播放，结束回黄灯
 - **无源蜂鸣器（可选）**：`app_config.h` 中 `MORSE_BUZZER_GPIO`（默认 **GPIO4**）接三脚模块的 **I/O**，**VCC→3V3**、**GND→GND**；用 **LEDC PWM** 发声，与点/划亮灯时间同步。低电平导通模块设 `MORSE_BUZZER_ACTIVE_LOW 1`，否则试 `0`。不用蜂鸣器将 `MORSE_BUZZER_GPIO` 设为 **-1**
+- **TFT ST7789（SPI）**：分辨率 **240×280**，上电初始化后 **深蓝底、居中显示 `Hello World`**。引脚在 `main/app_config.h` 的 `LCD_PIN_*` / `LCD_SPI_HOST`，勿与灯 **GPIO48**、蜂鸣器 **GPIO4** 冲突。若 **只有背光、整屏黑**：先查杜邦线 SCL/SDA/RES/DC/CS 是否接对、共地；再在 `app_config.h` 试 **`LCD_GAP_Y`（默认 20）**、`LCD_SPI_MODE`（默认 3，可改 0）、`LCD_RGB565_LITTLE_ENDIAN`（默认 1，可改 0）、`LCD_ST7789_BGR`。方向/色偏还可调 `LCD_SWAP_XY`、`LCD_MIRROR_*`、`LCD_INVERT_COLOR`。
 - **多页面**：`/` 为功能卡片；`/music` 为简谱 1～7 与《两只老虎》按钮；**`POST /api/tone`**，`body`：`{"note":1}`～`{"note":7}`；**`POST /api/play_twotigers`**（可 body `{}`）。均与摩斯共用蜂鸣器互斥；旋律节奏见 `morse_buzzer.c` 中 `MELODY_NOTE_MS` / `MELODY_GAP_MS`
 - **解码**：`POST /api/decode` 根据当前摩斯串 **实时** 返回 `decoded`（输入点/划、`/`、`//`、退格后自动刷新）；`POST /api/play` 仍会整段播放并返回解码结果
 
 > 板载 WS2812 数据脚为 **GPIO48**（与 `main/app_config.h` 中 `MORSE_LED_GPIO` 一致）。
+
+**ST7789 与 ESP32-S3 默认接线（与 `app_config.h` 一致，可按板子杜邦线改宏）**
+
+| 屏丝印 | 接开发板 | 说明 |
+|--------|----------|------|
+| VCC | 5V 或 3.3V | 以模块标注为准（常见小板 5V 经 LDO 供屏） |
+| GND | GND | 必须与 ESP32 共地 |
+| SCL | **GPIO12** | SPI 时钟（CLK） |
+| SDA | **GPIO11** | SPI MOSI |
+| RES | **GPIO14** | 复位 |
+| DC | **GPIO13** | 数据/命令 |
+| CS | **GPIO10** | 片选 |
+| BLK | 3.3V 或背光控制 | 你已用 3V3 点亮背光时可保持；若改由 GPIO 控背光，需在代码里配置 `LCD_PIN_BLK_GPIO` 并拉高 |
 
 手机连上热点后，浏览器打开 **`http://192.168.4.1/`** 进入**功能卡片页**；**摩斯**在 **`http://192.168.4.1/morse`**，**七声简谱**在 **`http://192.168.4.1/music`**（ESP 默认 SoftAP 网关；若你改过 DHCP 以串口日志为准）。
 

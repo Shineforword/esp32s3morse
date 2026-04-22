@@ -53,7 +53,7 @@ static void draw_char(esp_lcd_panel_handle_t panel, int x, int y, char ch, uint1
     int k = 0;
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
-            bool on = (g[row] & (1U << (7 - col))) != 0;
+            bool on = (g[row] & (1U << col)) != 0;
             block[k++] = on ? fg : bg;
         }
     }

@@ -8,6 +8,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include <string.h>
@@ -20,6 +21,25 @@ static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_panel_io;
 static uint16_t *s_line_dma;
 static bool s_hw_ready;
+/** 多任务（httpd、morse_player）共用 SPI 刷屏，无锁会总线冲突卡死；绘行中 delay 避免饿死 WiFi */
+static SemaphoreHandle_t s_lcd_mx;
+
+static void lcd_draw_lock(void)
+{
+    if (!s_lcd_mx) {
+        s_lcd_mx = xSemaphoreCreateMutex();
+    }
+    if (s_lcd_mx) {
+        (void)xSemaphoreTake(s_lcd_mx, portMAX_DELAY);
+    }
+}
+
+static void lcd_draw_unlock(void)
+{
+    if (s_lcd_mx) {
+        xSemaphoreGive(s_lcd_mx);
+    }
+}
 
 static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -39,6 +59,9 @@ static void draw_fill_rect(esp_lcd_panel_handle_t panel, int x, int y, int w, in
     }
     for (int row = 0; row < h; row++) {
         esp_lcd_panel_draw_bitmap(panel, x, y + row, x + w, y + row + 1, s_line_dma);
+        if ((row & 15) == 15) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
 }
 
@@ -373,7 +396,9 @@ esp_err_t lcd_st7789_show_hello(void)
     if (err != ESP_OK) {
         return err;
     }
+    lcd_draw_lock();
     paint_hello();
+    lcd_draw_unlock();
     ESP_LOGI(TAG, "Hello World painted");
     return ESP_OK;
 }
@@ -384,7 +409,9 @@ esp_err_t lcd_st7789_show_morse_live(const char *pattern, const char *decoded)
     if (err != ESP_OK) {
         return err;
     }
+    lcd_draw_lock();
     paint_morse_live(pattern, decoded);
+    lcd_draw_unlock();
     return ESP_OK;
 }
 
@@ -394,6 +421,8 @@ esp_err_t lcd_st7789_show_morse_preview(char sym_dot_or_dash)
     if (err != ESP_OK) {
         return err;
     }
+    lcd_draw_lock();
     paint_morse_preview(sym_dot_or_dash);
+    lcd_draw_unlock();
     return ESP_OK;
 }

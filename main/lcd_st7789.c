@@ -15,6 +15,7 @@ extern const uint8_t font8x8_basic[128][8];
 static const char *TAG = "lcd_st7789";
 
 static esp_lcd_panel_handle_t s_panel;
+static bool s_hw_ready;
 
 static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -67,13 +68,34 @@ static void draw_string(esp_lcd_panel_handle_t panel, int x, int y, const char *
     }
 }
 
+static void paint_hello(void)
+{
+    uint16_t bg = rgb565(0x1a, 0x2e, 0x4a);
+    uint16_t fg = rgb565(0xe0, 0xe8, 0xf0);
+
+    draw_fill_rect(s_panel, 0, 0, LCD_H_RES, LCD_V_RES, bg);
+
+    const char *msg = "Hello World";
+    int text_w = (int)strlen(msg) * 8;
+    int x0 = (LCD_H_RES - text_w) / 2;
+    int y0 = LCD_V_RES / 2 - 4;
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    draw_string(s_panel, x0, y0, msg, fg, bg);
+}
+
 esp_lcd_panel_handle_t lcd_st7789_get_panel(void)
 {
     return s_panel;
 }
 
-esp_err_t lcd_st7789_init_and_show_hello(void)
+esp_err_t lcd_st7789_ensure_init(void)
 {
+    if (s_hw_ready) {
+        return ESP_OK;
+    }
+
     spi_bus_config_t buscfg = {
         .sclk_io_num = LCD_PIN_SCLK,
         .mosi_io_num = LCD_PIN_MOSI,
@@ -122,7 +144,6 @@ esp_err_t lcd_st7789_init_and_show_hello(void)
 
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    /* SLPOUT 后控制器需稳定时间，否则易整屏不刷新 */
     vTaskDelay(pdMS_TO_TICKS(120));
 
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
@@ -136,20 +157,18 @@ esp_err_t lcd_st7789_init_and_show_hello(void)
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, LCD_MIRROR_X, LCD_MIRROR_Y));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, LCD_GAP_X, LCD_GAP_Y));
 
-    uint16_t bg = rgb565(0x1a, 0x2e, 0x4a);
-    uint16_t fg = rgb565(0xe0, 0xe8, 0xf0);
+    s_hw_ready = true;
+    ESP_LOGI(TAG, "ST7789 %dx%d init ok", LCD_H_RES, LCD_V_RES);
+    return ESP_OK;
+}
 
-    draw_fill_rect(s_panel, 0, 0, LCD_H_RES, LCD_V_RES, bg);
-
-    const char *msg = "Hello World";
-    int text_w = (int)strlen(msg) * 8;
-    int x0 = (LCD_H_RES - text_w) / 2;
-    int y0 = LCD_V_RES / 2 - 4;
-    if (x0 < 0) {
-        x0 = 0;
+esp_err_t lcd_st7789_show_hello(void)
+{
+    esp_err_t err = lcd_st7789_ensure_init();
+    if (err != ESP_OK) {
+        return err;
     }
-    draw_string(s_panel, x0, y0, msg, fg, bg);
-
-    ESP_LOGI(TAG, "ST7789 %dx%d Hello World ok", LCD_H_RES, LCD_V_RES);
+    paint_hello();
+    ESP_LOGI(TAG, "Hello World painted");
     return ESP_OK;
 }

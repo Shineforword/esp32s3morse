@@ -1,5 +1,5 @@
 /**
- * morse_http.c —— ESP HTTP Server：卡片首页 /、/morse、/music + /api/tone 等
+ * morse_http.c —— ESP HTTP Server：卡片首页 /、/morse、/music、/lcd 与 /api 下各接口
  *
  * 新手速览：
  *   - httpd_req_t *req：代表「当前这一条 HTTP 请求」，读 body、设响应头、发 body 都用它。
@@ -14,6 +14,7 @@
 #include "app_config.h"
 #include "morse_buzzer.h"
 #include "morse_decode.h"
+#include "lcd_st7789.h"
 #include "morse_player.h"
 #include "wifi_softap.h"
 
@@ -38,6 +39,7 @@ static const char DASHBOARD_HTML[] =
     ".hint{color:#555;font-size:14px;}"
     ".grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px;}"
     "@media(min-width:480px){.grid{grid-template-columns:1fr 1fr;}}"
+    ".card.lcd h2{color:#5b21b6;}"
     ".card{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.07);"
     "text-decoration:none;color:inherit;display:block;border:1px solid #e1e4e8;transition:transform .08s;}"
     ".card:active{transform:scale(0.98);}"
@@ -52,6 +54,8 @@ static const char DASHBOARD_HTML[] =
     "<p>网页输入点划，灯点红划绿，蜂鸣器同步嘀嗒。</p><span class=\"go\">点击进入 →</span></a>"
     "<a class=\"card\" href=\"/music\"><h2>七声简谱</h2>"
     "<p>单音 1～7；《两只老虎》整曲（蜂鸣器简易版）。</p><span class=\"go\">点击进入 →</span></a>"
+    "<a class=\"card lcd\" href=\"/lcd\"><h2>屏幕 Hello</h2>"
+    "<p>ST7789 TFT：点按钮在屏上显示 Hello World（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
     "</div></body></html>";
 
 static const char MORSE_PAGE_HTML[] =
@@ -167,6 +171,36 @@ static const char MUSIC_PAGE_HTML[] =
     "document.getElementById('tiger').onclick=function(){playMelody('/api/play_twotigers',this);};"
     "</script></body></html>";
 
+static const char LCD_PAGE_HTML[] =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>屏幕 Hello</title>"
+    "<style>"
+    "body{font-family:system-ui,sans-serif;padding:16px;max-width:520px;margin:auto;background:#f5f3ff;}"
+    "h1{font-size:1.25rem;color:#1e1b4b;}"
+    ".nav{margin-bottom:12px;font-size:15px;}"
+    ".hint{color:#555;font-size:14px;line-height:1.5;margin-bottom:16px;}"
+    "#go{width:100%;padding:14px 16px;font-size:16px;border:none;border-radius:12px;font-weight:600;"
+    "background:#5b21b6;color:#fff;touch-action:manipulation;}"
+    "#go:active{background:#4c1d95;}"
+    "#go:disabled{opacity:.55;}"
+    "#msg{margin-top:14px;font-size:15px;color:#333;min-height:1.4em;}"
+    "</style></head><body>"
+    "<p class=\"nav\"><a href=\"/\">← 功能首页</a></p>"
+    "<h1>屏幕 Hello World</h1>"
+    "<p class=\"hint\">在 ST7789 上清屏并居中显示 <strong>Hello World</strong>。首次点击会初始化 SPI；失败请看串口日志与 <code>app_config.h</code> 引脚。</p>"
+    "<button type=\"button\" id=\"go\">在屏幕上显示 Hello World</button>"
+    "<p id=\"msg\"></p>"
+    "<script>"
+    "document.getElementById('go').onclick=async function(){"
+    "var b=this,m=document.getElementById('msg');b.disabled=true;m.textContent='发送中…';"
+    "try{var r=await fetch('/api/lcd_hello',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});"
+    "var j=await r.json();"
+    "if(j.ok){m.textContent='已刷新到屏幕。';}else{m.textContent='失败: '+(j.error||'未知');}"
+    "}catch(e){m.textContent='请求失败: '+e;}"
+    "b.disabled=false;};"
+    "</script></body></html>";
+
 /**
  * 解析 JSON 体 {\"note\":3} 或 {\"note\": 7}，note 为 1～7。
  */
@@ -279,6 +313,13 @@ static esp_err_t music_page_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, MUSIC_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+/** GET /lcd → TFT Hello World 页 */
+static esp_err_t lcd_page_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, LCD_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
 /** POST /api/tone body: {\"note\":1..7}，蜂鸣器播单音 */
 static esp_err_t tone_post_handler(httpd_req_t *req)
 {
@@ -334,6 +375,34 @@ static esp_err_t twotigers_post_handler(httpd_req_t *req)
     if (!morse_buzzer_play_two_tigers()) {
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"busy\":true}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/** POST /api/lcd_hello —— ST7789 清屏并显示 Hello World（body 可为 {}） */
+static esp_err_t lcd_hello_post_handler(httpd_req_t *req)
+{
+    int len = req->content_len;
+    if (len < 0 || len > 128) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    if (len > 0) {
+        char drain[128];
+        int r = httpd_req_recv(req, drain, len > (int)sizeof(drain) - 1 ? (int)sizeof(drain) - 1 : len);
+        if (r <= 0) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+            return ESP_OK;
+        }
+    }
+
+    esp_err_t e = lcd_st7789_show_hello();
+    if (e != ESP_OK) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"lcd_init\"}");
     }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -530,12 +599,16 @@ void morse_http_start(void)
         httpd_register_uri_handler(server, &morse_page);
         httpd_uri_t music_page = {.uri = "/music", .method = HTTP_GET, .handler = music_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &music_page);
+        httpd_uri_t lcd_page = {.uri = "/lcd", .method = HTTP_GET, .handler = lcd_page_get_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &lcd_page);
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &fav);
         httpd_uri_t tone = {.uri = "/api/tone", .method = HTTP_POST, .handler = tone_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &tone);
         httpd_uri_t twotigers = {.uri = "/api/play_twotigers", .method = HTTP_POST, .handler = twotigers_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &twotigers);
+        httpd_uri_t lcd_hello = {.uri = "/api/lcd_hello", .method = HTTP_POST, .handler = lcd_hello_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &lcd_hello);
         httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &preview);
         httpd_uri_t decode = {.uri = "/api/decode", .method = HTTP_POST, .handler = decode_post_handler, .user_ctx = NULL};

@@ -52,7 +52,11 @@ void wifi_softap_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "SoftAP SSID:%s password:%s", WIFI_SSID, WIFI_PASS);
+    if (strlen(WIFI_PASS) == 0) {
+        ESP_LOGI(TAG, "SoftAP SSID:%s (open, no password)", WIFI_SSID);
+    } else {
+        ESP_LOGI(TAG, "SoftAP SSID:%s WPA2 password set", WIFI_SSID);
+    }
     /* 192.168.4.1 是 ESP-IDF SoftAP 默认网关 IP，一般无需改 */
     ESP_LOGI(TAG, "手机连热点后打开 http://192.168.4.1/");
 }

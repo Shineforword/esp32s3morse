@@ -10,5 +10,5 @@ idf_component_register(
          "lcd_st7789.c"
          "font8x8_basic.c"
     INCLUDE_DIRS "."
-    REQUIRES led_strip driver esp_http_server esp_wifi esp_netif nvs_flash esp_event esp_lcd
+    REQUIRES led_strip driver esp_http_server esp_wifi esp_netif nvs_flash esp_event esp_lcd heap
 )

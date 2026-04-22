@@ -9,8 +9,8 @@
 /** 手机搜到的 Wi‑Fi 名称 */
 #define WIFI_SSID      "ESP32-Morse"
 
-/** Wi‑Fi 密码，至少 8 位（WPA2）；若改为空字符串则开放网络（不推荐） */
-#define WIFI_PASS      "12345678"
+/** 空字符串 = 开放热点（无密码，WIFI_AUTH_OPEN）；若设密码须 ≥8 位以用 WPA2 */
+#define WIFI_PASS      ""
 
 /** 初始化并启动热点；需保证此前已 nvs_flash_init（在 app_main 里已做） */
 void wifi_softap_init(void);

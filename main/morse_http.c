@@ -78,8 +78,7 @@ static const char MORSE_PAGE_HTML[] =
     "</style></head><body>"
     "<p class=\"nav\" style=\"margin:0 0 10px\"><a href=\"/\">← 功能首页</a></p>"
     "<h1>摩斯控制</h1>"
-    "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>，密码 <strong>" WIFI_PASS
-    "</strong>。黄常态；点红灯、划绿灯闪一下反馈；点「发送播放」整段按点红划绿播放；接无源蜂鸣器时同步嘀嗒声。</p>"
+    "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>（开放网络，无需密码）。黄常态；点红灯、划绿灯闪一下反馈；点「发送播放」整段按点红划绿播放；接无源蜂鸣器时同步嘀嗒声。</p>"
     "<p class=\"hint\">大按钮：<strong>短按=点</strong>，<strong>长按=划</strong>（约≥280ms）。</p>"
     "<div class=\"hint\">当前摩斯串</div>"
     "<div id=\"pat\"></div>"

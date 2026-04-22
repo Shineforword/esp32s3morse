@@ -52,12 +52,17 @@
 #define MORSE_PATTERN_MAX     256
 
 /* -------------------------------------------------------------------------- */
-/* TFT ST7789（SPI 8 线：GND VCC SCL SDA RES DC CS BLK）                        */
-/* 与 MORSE_LED_GPIO(48)、MORSE_BUZZER_GPIO(4) 勿复用引脚。                    */
+/* TFT：IC **ST7789V3**，**240(RGB)×280**，丝印常见 **1.69 TFT V1.1**（与 v1.4 同类） */
+/* 引脚说明（排针 1→8，与卖家「引脚说明」表一致）：                            */
+/*   1=GND  2=VCC(3.3V)  3=SCL  4=SDA  5=RES  6=DC  7=CS  8=BLK               */
+/* BLK：默认开背光；**低电平关背光**。接 3V3 常亮可不占用 GPIO。               */
+/* 下表 GPIO 为 SCL/SDA/RES/DC/CS 的接法；勿与灯 48、蜂鸣器 4 共用同一脚。     */
 /* -------------------------------------------------------------------------- */
 
-/** SPI 主机：与 Wi‑Fi 等外设共用 SPI 时注意冲突；本工程默认用 SPI2。 */
-#define LCD_SPI_HOST SPI2_HOST
+/**
+ * SPI 主机：SPI2/SPI3 均可；若一种组合只有背光，换另一种试。
+ */
+#define LCD_SPI_HOST SPI3_HOST
 
 /** 屏 SCL → ESP32 SPI CLK；屏 SDA → MOSI */
 #define LCD_PIN_SCLK 12
@@ -69,39 +74,53 @@
 #define LCD_PIN_CS  10
 
 /**
- * 背光已由模块接 3V3 常亮：保持 -1。
- * 若背光接某 GPIO，填该脚并在 lcd_st7789.c 里拉高（当前未实现，可自行加 gpio_set_level）。
+ * BLK 由硬件接 3V3 常亮：保持 -1。
+ * 若 BLK 改接 GPIO：须保持**高电平**背光才亮（低电平关）；再在 lcd_st7789.c 里上电拉高。
  */
 #define LCD_PIN_BLK_GPIO (-1)
 
-/** 本屏可视区 240×280（竖屏：宽 240、高 280）。 */
+/** 横向 240 子像素列（RGB）、纵向 280 行；竖屏时宽=240、高=280。 */
 #define LCD_H_RES 240
 #define LCD_V_RES 280
 
-/** 杜邦线较长或黑屏时可降到 20M；仍不行再试 10M */
-#define LCD_PIXEL_CLOCK_HZ (20 * 1000 * 1000)
+/** 杜邦线长或黑屏时优先 10M；稳定后再提到 20M、40M */
+#define LCD_PIXEL_CLOCK_HZ (10 * 1000 * 1000)
 
-/** 多数 240×280 在 ST7789 的 320 行窗口内可视区从约第 20 行开始，黑屏只有背光时先试 Y=20 */
+/**
+ * 1.69 / 240×280 在 ST7789 的 320 行显存里常「垂直居中」：行偏移 (320−280)/2 = **20**。
+ * Adafruit ST7789 对 1.69″ 等屏也用该算法；GAP 不对时易整屏黑、只有背光。
+ * 若画面整体偏上/下，可改 0 或 40 微调。
+ */
 #define LCD_GAP_X 0
 #define LCD_GAP_Y 20
 
-/** SPI 模式：多数小板用 3；仍黑屏可改 0 试 */
+/** SPI 模式：0 与 3 最常见；仅背光时务必与杜邦线质量一起试另一种 */
 #define LCD_SPI_MODE 3
 
 /**
- * RGB565 RAM 字节序：1=小端（与多数 SPI 例程一致）；黑屏可改 0 试大端
+ * 1：在 esp_lcd 最小初始化之外再发 **LVGL 常用电源/伽马**（易解决「只有背光」）。
+ * 若与某批屏冲突可改 0 关闭。
  */
-#define LCD_RGB565_LITTLE_ENDIAN 1
+#define LCD_ST7789_LVGL_EXTRA_INIT 1
+
+/** 1=RGB565 小端 RAM；0=大端（与 esp_lcd ST7789 默认 RAMCTRL 更接近）。黑屏时两种都试 */
+#define LCD_RGB565_LITTLE_ENDIAN 0
 
 /** 1=BGR 顺序；偏红蓝反了时试 1 */
 #define LCD_ST7789_BGR 0
 
-/** 颜色反相：黑屏可先关 0；整屏反色再开 1 */
-#define LCD_INVERT_COLOR 0
+/**
+ * 1：与 Adafruit 通用 ST7789 初始化里的 INVON 一致，多数 1.69 IPS 需要。
+ * 若颜色/对比异常可改 0。
+ */
+#define LCD_INVERT_COLOR 1
 
 /** 横竖交换：方向不对改 0/1 */
-#define LCD_SWAP_XY 0
+#define LCD_SWAP_XY 1
 
-/** 镜像：左右/上下反了把 0 改成 1 试 */
+/**
+ * 镜像修正（esp_lcd_panel_mirror）：文字左右镜像开 **LCD_MIRROR_X**；
+ * 上下镜像开 **LCD_MIRROR_Y**；仍不对可 **X/Y 组合** 试 0/1。
+ */
 #define LCD_MIRROR_X 0
-#define LCD_MIRROR_Y 0
+#define LCD_MIRROR_Y 1

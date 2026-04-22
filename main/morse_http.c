@@ -78,7 +78,7 @@ static const char MORSE_PAGE_HTML[] =
     "</style></head><body>"
     "<p class=\"nav\" style=\"margin:0 0 10px\"><a href=\"/\">← 功能首页</a></p>"
     "<h1>摩斯控制</h1>"
-    "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>（开放网络，无需密码）。黄常态；点红灯、划绿灯闪一下反馈；点「发送播放」整段按点红划绿播放；接无源蜂鸣器时同步嘀嗒声。</p>"
+    "<p class=\"hint\">连接热点 <strong>" WIFI_SSID "</strong>（开放网络，无需密码）。黄常态；点红灯、划绿灯闪一下反馈；点「发送播放」整段按点红划绿播放；接无源蜂鸣器时同步嘀嗒声。接 ST7789 屏时会上屏显示当前解码与摩斯串。</p>"
     "<p class=\"hint\">大按钮：<strong>短按=点</strong>，<strong>长按=划</strong>（约≥280ms）。</p>"
     "<div class=\"hint\">当前摩斯串</div>"
     "<div id=\"pat\"></div>"
@@ -98,10 +98,9 @@ static const char MORSE_PAGE_HTML[] =
     "const pat=document.getElementById('pat'),dec=document.getElementById('dec'),key=document.getElementById('key');"
     "function sync(){pat.textContent=buf||'(空)';}"
     "function refreshDecode(){"
-    "if(!buf){dec.textContent='(空)';return;}"
     "fetch('/api/decode',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({pattern:buf})}).then(function(r){return r.json();}).then(function(j){"
-    "if(j.ok){dec.textContent='实时: '+j.decoded;}else{dec.textContent='解码错误';}"
+    "if(j.ok){dec.textContent=buf?'实时: '+j.decoded:'(空)';}else{dec.textContent='解码错误';}"
     "}).catch(function(){});"
     "}"
     "key.addEventListener('pointerdown',function(e){e.preventDefault();t0=performance.now();});"
@@ -114,7 +113,7 @@ static const char MORSE_PAGE_HTML[] =
     "document.getElementById('endL').onclick=function(){buf+='/';sync();refreshDecode();};"
     "document.getElementById('endW').onclick=function(){buf+='//';sync();refreshDecode();};"
     "document.getElementById('bs').onclick=function(){buf=buf.slice(0,-1);sync();refreshDecode();};"
-    "document.getElementById('clr').onclick=function(){buf='';sync();dec.textContent='(空)';};"
+    "document.getElementById('clr').onclick=function(){buf='';sync();refreshDecode();};"
     "document.getElementById('send').onclick=async function(){"
     "if(!buf){dec.textContent='请先输入摩斯';return;}"
     "try{"
@@ -124,7 +123,7 @@ static const char MORSE_PAGE_HTML[] =
     "if(j.ok){dec.textContent='已发送播放 | 解码: '+j.decoded+' | 摩斯: '+j.pattern;}else{dec.textContent='错误: '+(j.error||'');}"
     "}catch(e){dec.textContent='请求失败: '+e;}"
     "};"
-    "sync();dec.textContent='(空)';"
+    "sync();refreshDecode();"
     "</script></body></html>";
 
 static const char MUSIC_PAGE_HTML[] =
@@ -447,6 +446,7 @@ static esp_err_t preview_post_handler(httpd_req_t *req)
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"busy\":true}");
     }
+    (void)lcd_st7789_show_morse_preview(sym);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -482,6 +482,8 @@ static esp_err_t decode_post_handler(httpd_req_t *req)
 
     char decoded[128];
     morse_decode_pattern(pattern, decoded, sizeof(decoded));
+
+    (void)lcd_st7789_show_morse_live(pattern, decoded);
 
     /* 把 decoded 嵌入 JSON 字符串字段前，必须对 " 与 \\ 转义 */
     char dec_esc[sizeof(decoded) * 2];
@@ -548,6 +550,8 @@ static esp_err_t play_post_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    (void)lcd_st7789_show_morse_live(pattern, decoded);
+
     static char s_esc[MORSE_PATTERN_MAX * 2];
     static char s_dec_esc[128 * 2];
     static char s_play_resp[1536];
@@ -586,6 +590,8 @@ void morse_http_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
+    /* 默认 max_uri_handlers=8，本工程注册项多于 8，不加大则 /api/preview、decode、play 会注册失败→404 */
+    config.max_uri_handlers = 16;
     /* 默认 4096 对 decode/play 等 handler + 解析器偏紧，提到 16K 更稳 */
     config.stack_size = 16384;
 

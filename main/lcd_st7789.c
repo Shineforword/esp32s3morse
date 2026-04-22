@@ -92,6 +92,70 @@ static void paint_hello(void)
     draw_string(s_panel, x0, y0, msg, fg, bg);
 }
 
+#define LCD_MORSE_LINE_CHARS (LCD_H_RES / 8)
+
+/** 单行最多 LCD_MORSE_LINE_CHARS 个字符；超长尾部用 "..." */
+static void morse_copy_trunc_line(char *dst, size_t dstsz, const char *src)
+{
+    if (dstsz == 0) {
+        return;
+    }
+    dst[0] = '\0';
+    if (!src) {
+        return;
+    }
+    size_t max = dstsz - 1;
+    size_t n = strlen(src);
+    if (n <= max) {
+        memcpy(dst, src, n + 1);
+        return;
+    }
+    if (max < 4) {
+        return;
+    }
+    size_t keep = max - 3;
+    memcpy(dst, src, keep);
+    memcpy(dst + keep, "...", 4);
+}
+
+static void paint_morse_live(const char *pattern, const char *decoded)
+{
+    uint16_t bg = rgb565(0xff, 0xff, 0xff);
+    uint16_t fg = rgb565(0xf8, 0x00, 0x00);
+
+    draw_fill_rect(s_panel, 0, 0, LCD_H_RES, LCD_V_RES, bg);
+    draw_string(s_panel, 4, 8, "MORSE", fg, bg);
+
+    char line[LCD_MORSE_LINE_CHARS + 1];
+    const char *d = (decoded && decoded[0]) ? decoded : "-";
+    morse_copy_trunc_line(line, sizeof(line), d);
+    draw_string(s_panel, 0, 28, line, fg, bg);
+
+    const char *p = (pattern && pattern[0]) ? pattern : "-";
+    size_t plen = strlen(p);
+    if (plen <= (size_t)LCD_MORSE_LINE_CHARS) {
+        morse_copy_trunc_line(line, sizeof(line), p);
+        draw_string(s_panel, 0, 44, line, fg, bg);
+    } else {
+        memcpy(line, p, (size_t)LCD_MORSE_LINE_CHARS);
+        line[LCD_MORSE_LINE_CHARS] = '\0';
+        draw_string(s_panel, 0, 44, line, fg, bg);
+        morse_copy_trunc_line(line, sizeof(line), p + LCD_MORSE_LINE_CHARS);
+        draw_string(s_panel, 0, 60, line, fg, bg);
+    }
+}
+
+static void paint_morse_preview(char sym)
+{
+    uint16_t bg = rgb565(0xff, 0xff, 0xff);
+    uint16_t fg = rgb565(0xf8, 0x00, 0x00);
+
+    draw_fill_rect(s_panel, 0, 0, LCD_H_RES, LCD_V_RES, bg);
+    draw_string(s_panel, 4, 8, "MORSE", fg, bg);
+    const char *row = (sym == '-') ? "- PREVIEW" : ". PREVIEW";
+    draw_string(s_panel, 0, 40, row, fg, bg);
+}
+
 esp_lcd_panel_handle_t lcd_st7789_get_panel(void)
 {
     return s_panel;
@@ -311,5 +375,25 @@ esp_err_t lcd_st7789_show_hello(void)
     }
     paint_hello();
     ESP_LOGI(TAG, "Hello World painted");
+    return ESP_OK;
+}
+
+esp_err_t lcd_st7789_show_morse_live(const char *pattern, const char *decoded)
+{
+    esp_err_t err = lcd_st7789_ensure_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+    paint_morse_live(pattern, decoded);
+    return ESP_OK;
+}
+
+esp_err_t lcd_st7789_show_morse_preview(char sym_dot_or_dash)
+{
+    esp_err_t err = lcd_st7789_ensure_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+    paint_morse_preview(sym_dot_or_dash);
     return ESP_OK;
 }

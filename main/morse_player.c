@@ -11,6 +11,8 @@
 
 #include "app_config.h"
 #include "morse_buzzer.h"
+#include "lcd_st7789.h"
+#include "morse_decode.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -150,6 +152,11 @@ static void morse_player_task(void *arg)
         }
         ESP_LOGI(TAG, "play: %s", msg.pattern);
         xSemaphoreTake(s_led_mutex, portMAX_DELAY);
+        {
+            char dec[128];
+            morse_decode_pattern(msg.pattern, dec, sizeof(dec));
+            (void)lcd_st7789_show_morse_live(msg.pattern, dec);
+        }
         morse_buzzer_force_idle();
         morse_play_pattern(s_strip, msg.pattern, MORSE_UNIT_MS, MORSE_LED_BRIGHT_PLAY);
         morse_buzzer_force_idle();

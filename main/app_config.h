@@ -107,7 +107,7 @@
 #define LCD_RGB565_LITTLE_ENDIAN 1
 
 /** 1=BGR 顺序；红字变蓝、蓝变红时改为 1（多数 ST7789 IPS 模组为 BGR） */
-#define LCD_ST7789_BGR 1
+#define LCD_ST7789_BGR 0
 
 /**
  * 1：与 Adafruit 通用 ST7789 初始化里的 INVON 一致，多数 1.69 IPS 需要。

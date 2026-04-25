@@ -13,6 +13,9 @@ esp_err_t lcd_st7789_ensure_init(void);
  */
 esp_err_t lcd_st7789_show_hello(void);
 
+/** 全屏显示 tank 图（240×280 RGB565，会先 ensure_init）。 */
+esp_err_t lcd_st7789_show_tank(void);
+
 /**
  * 清屏并显示当前摩斯串与解码结果（会先 ensure_init）。
  * pattern / decoded 可为 NULL 或空串，空时屏上显示 "-"。

@@ -14,6 +14,9 @@
 #include <string.h>
 
 extern const uint8_t font8x8_basic[128][8];
+extern const int tank_img_w;
+extern const int tank_img_h;
+extern const uint16_t tank_img_rgb565[];
 
 static const char *TAG = "lcd_st7789";
 
@@ -113,6 +116,29 @@ static void paint_hello(void)
         x0 = 0;
     }
     draw_string(s_panel, x0, y0, msg, fg, bg);
+}
+
+static void paint_tank(void)
+{
+    int w = tank_img_w;
+    int h = tank_img_h;
+    if (w != LCD_H_RES || h != LCD_V_RES) {
+        uint16_t bg = rgb565(0xff, 0xff, 0xff);
+        draw_fill_rect(s_panel, 0, 0, LCD_H_RES, LCD_V_RES, bg);
+        draw_string(s_panel, 0, 8, "TANK BAD SIZE", rgb565(0xf8, 0x00, 0x00), bg);
+        return;
+    }
+    for (int row = 0; row < h; row++) {
+        for (int col = 0; col < w; col++) {
+            uint16_t c = tank_img_rgb565[row * w + col];
+            c = (uint16_t)~c; /* 兜底补偿：无论面板反相状态如何，先把“底片感”反回来 */
+            s_line_dma[col] = c;
+        }
+        esp_lcd_panel_draw_bitmap(s_panel, 0, row, w, row + 1, s_line_dma);
+        if ((row & 15) == 15) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+    }
 }
 
 #define LCD_MORSE_LINE_CHARS (LCD_H_RES / 8)
@@ -396,10 +422,28 @@ esp_err_t lcd_st7789_show_hello(void)
     if (err != ESP_OK) {
         return err;
     }
+#if LCD_INVERT_COLOR
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
+#endif
     lcd_draw_lock();
     paint_hello();
     lcd_draw_unlock();
     ESP_LOGI(TAG, "Hello World painted");
+    return ESP_OK;
+}
+
+esp_err_t lcd_st7789_show_tank(void)
+{
+    esp_err_t err = lcd_st7789_ensure_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+    /* 图片模式固定关反相，消除“底片透光感” */
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, false));
+    lcd_draw_lock();
+    paint_tank();
+    lcd_draw_unlock();
+    ESP_LOGI(TAG, "Tank fullscreen painted");
     return ESP_OK;
 }
 
@@ -409,6 +453,9 @@ esp_err_t lcd_st7789_show_morse_live(const char *pattern, const char *decoded)
     if (err != ESP_OK) {
         return err;
     }
+#if LCD_INVERT_COLOR
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
+#endif
     lcd_draw_lock();
     paint_morse_live(pattern, decoded);
     lcd_draw_unlock();
@@ -421,6 +468,9 @@ esp_err_t lcd_st7789_show_morse_preview(char sym_dot_or_dash)
     if (err != ESP_OK) {
         return err;
     }
+#if LCD_INVERT_COLOR
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
+#endif
     lcd_draw_lock();
     paint_morse_preview(sym_dot_or_dash);
     lcd_draw_unlock();

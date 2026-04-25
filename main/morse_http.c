@@ -56,6 +56,8 @@ static const char DASHBOARD_HTML[] =
     "<p>单音 1～7；《两只老虎》整曲（蜂鸣器简易版）。</p><span class=\"go\">点击进入 →</span></a>"
     "<a class=\"card lcd\" href=\"/lcd\"><h2>屏幕 Hello</h2>"
     "<p>ST7789 TFT：点按钮在屏上显示 Hello World（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
+    "<a class=\"card lcd\" href=\"/tank\"><h2>全屏 Tank</h2>"
+    "<p>将 tank.png 缩放铺满 240×280 后整屏显示（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
     "</div></body></html>";
 
 static const char MORSE_PAGE_HTML[] =
@@ -199,6 +201,37 @@ static const char LCD_PAGE_HTML[] =
     "b.disabled=false;};"
     "</script></body></html>";
 
+static const char TANK_PAGE_HTML[] =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>全屏 Tank</title>"
+    "<style>"
+    "body{font-family:system-ui,sans-serif;padding:16px;max-width:520px;margin:auto;background:#ecfdf5;}"
+    "h1{font-size:1.25rem;color:#134e4a;}"
+    ".nav{margin-bottom:12px;font-size:15px;}"
+    ".hint{color:#555;font-size:14px;line-height:1.5;margin-bottom:16px;}"
+    "#go{width:100%;padding:14px 16px;font-size:16px;border:none;border-radius:12px;font-weight:600;"
+    "background:#0f766e;color:#fff;touch-action:manipulation;}"
+    "#go:active{background:#115e59;}"
+    "#go:disabled{opacity:.55;}"
+    "#msg{margin-top:14px;font-size:15px;color:#333;min-height:1.4em;}"
+    "</style></head><body>"
+    "<p class=\"nav\"><a href=\"/\">← 功能首页</a></p>"
+    "<h1>全屏 tank.png</h1>"
+    "<p class=\"hint\">图源 <code>main/tank.png</code>，固件内为 240×280 RGB565。色彩可在 <code>app_config.h</code> 调 "
+    "<code>LCD_IMAGE_COMPENSATE_INVERT</code> / <code>LCD_IMAGE_SWAP_RB</code>。</p>"
+    "<button type=\"button\" id=\"go\">在屏幕上全屏显示 Tank</button>"
+    "<p id=\"msg\"></p>"
+    "<script>"
+    "document.getElementById('go').onclick=async function(){"
+    "var b=this,m=document.getElementById('msg');b.disabled=true;m.textContent='发送中…';"
+    "try{var r=await fetch('/api/lcd_tank',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});"
+    "var j=await r.json();"
+    "if(j.ok){m.textContent='已全屏显示。';}else{m.textContent='失败: '+(j.error||'未知');}"
+    "}catch(e){m.textContent='请求失败: '+e;}"
+    "b.disabled=false;};"
+    "</script></body></html>";
+
 /**
  * 解析 JSON 体 {\"note\":3} 或 {\"note\": 7}，note 为 1～7。
  */
@@ -318,6 +351,13 @@ static esp_err_t lcd_page_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, LCD_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+/** GET /tank → 全屏 tank 图说明页 */
+static esp_err_t tank_page_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, TANK_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
 /** POST /api/tone body: {\"note\":1..7}，蜂鸣器播单音 */
 static esp_err_t tone_post_handler(httpd_req_t *req)
 {
@@ -398,6 +438,34 @@ static esp_err_t lcd_hello_post_handler(httpd_req_t *req)
     }
 
     esp_err_t e = lcd_st7789_show_hello();
+    if (e != ESP_OK) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"lcd_init\"}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/** POST /api/lcd_tank —— ST7789 全屏显示 tank（body 可为 {}） */
+static esp_err_t lcd_tank_post_handler(httpd_req_t *req)
+{
+    int len = req->content_len;
+    if (len < 0 || len > 128) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    if (len > 0) {
+        char drain[128];
+        int r = httpd_req_recv(req, drain, len > (int)sizeof(drain) - 1 ? (int)sizeof(drain) - 1 : len);
+        if (r <= 0) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+            return ESP_OK;
+        }
+    }
+
+    esp_err_t e = lcd_st7789_show_tank();
     if (e != ESP_OK) {
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"lcd_init\"}");
@@ -591,7 +659,7 @@ void morse_http_start(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
     /* 默认 max_uri_handlers=8，本工程注册项多于 8，不加大则 /api/preview、decode、play 会注册失败→404 */
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 20;
     /* 默认 4096 对 decode/play 等 handler + 解析器偏紧，提到 16K 更稳 */
     config.stack_size = 16384;
 
@@ -606,6 +674,8 @@ void morse_http_start(void)
         httpd_register_uri_handler(server, &music_page);
         httpd_uri_t lcd_page = {.uri = "/lcd", .method = HTTP_GET, .handler = lcd_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &lcd_page);
+        httpd_uri_t tank_page = {.uri = "/tank", .method = HTTP_GET, .handler = tank_page_get_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &tank_page);
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &fav);
         httpd_uri_t tone = {.uri = "/api/tone", .method = HTTP_POST, .handler = tone_post_handler, .user_ctx = NULL};
@@ -614,6 +684,8 @@ void morse_http_start(void)
         httpd_register_uri_handler(server, &twotigers);
         httpd_uri_t lcd_hello = {.uri = "/api/lcd_hello", .method = HTTP_POST, .handler = lcd_hello_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &lcd_hello);
+        httpd_uri_t lcd_tank = {.uri = "/api/lcd_tank", .method = HTTP_POST, .handler = lcd_tank_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &lcd_tank);
         httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &preview);
         httpd_uri_t decode = {.uri = "/api/decode", .method = HTTP_POST, .handler = decode_post_handler, .user_ctx = NULL};

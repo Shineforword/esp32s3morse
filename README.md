@@ -10,6 +10,7 @@
 - **灯效**：常态 **黄灯**；**每输入一个点/划**会请求 `POST /api/preview`，板子 **点红灯、划绿灯** 闪一下（与整段播放互斥）；点「发送播放」后整段 **点红划绿** 按摩斯播放，结束回黄灯
 - **无源蜂鸣器（可选）**：`app_config.h` 中 `MORSE_BUZZER_GPIO`（默认 **GPIO4**）接三脚模块的 **I/O**，**VCC→3V3**、**GND→GND**；用 **LEDC PWM** 发声，与点/划亮灯时间同步。低电平导通模块设 `MORSE_BUZZER_ACTIVE_LOW 1`，否则试 `0`。不用蜂鸣器将 `MORSE_BUZZER_GPIO` 设为 **-1**
 - **TFT（SPI）**：小板丝印多为 **1.69 TFT V1.1**（与 v1.4 同类），驱动 **ST7789V3**，**240(RGB)×280**。首页 **「屏幕 Hello」** → **`/lcd`**，点按钮 **`POST /api/lcd_hello`**（`body` 可为 `{}`）刷新画面，首次请求时初始化 SPI。引脚见 `main/app_config.h` 的 `LCD_PIN_*`，勿与灯 **GPIO48**、蜂鸣器 **GPIO4** 冲突。若 **只有背光**：先查接线与共地。1.69 / 240×280 在 ST7789 的 **320 行**里常垂直居中，**行偏移应为 (320−280)/2=20**（工程里默认 **`LCD_GAP_Y 20`**）。另可参考 Adafruit 通用 ST7789 初始化打开 **反相（`LCD_INVERT_COLOR 1`）**。仍不行再试 **`LCD_SPI_MODE`**（0/3）、**`LCD_RGB565_LITTLE_ENDIAN`**（0/1）、**`LCD_ST7789_BGR`**、**`LCD_SPI_HOST`**（SPI2/SPI3）、**`LCD_SWAP_XY` / `LCD_MIRROR_*`**。固件已默认开启 **`LCD_ST7789_LVGL_EXTRA_INIT`**（补发 LVGL 常用电源/伽马）；若异常可改 **0** 关闭。硬件上务必核对 **SDA=数据线(MOSI)、SCL=时钟**，**勿与 DC 对调**。
+- **全屏图片（Tank）**：首页 **「全屏 Tank」** → **`/tank`**，点按钮调用 **`POST /api/lcd_tank`**，在 ST7789 全屏显示 `main/tank.png`（离线转成 `main/tank_rgb565.c`）。换图可运行 `python3 tools/gen_tank_rgb565.py` 重新生成数组。
 - **多页面**：`/` 为功能卡片；`/music` 为简谱 1～7 与《两只老虎》按钮；**`POST /api/tone`**，`body`：`{"note":1}`～`{"note":7}`；**`POST /api/play_twotigers`**（可 body `{}`）。均与摩斯共用蜂鸣器互斥；旋律节奏见 `morse_buzzer.c` 中 `MELODY_NOTE_MS` / `MELODY_GAP_MS`
 - **解码**：`POST /api/decode` 根据当前摩斯串 **实时** 返回 `decoded`（输入点/划、`/`、`//`、退格后自动刷新）；`POST /api/play` 仍会整段播放并返回解码结果
 
@@ -30,7 +31,24 @@
 | 7 | CS | **GPIO10** | 片选 |
 | 8 | BLK | **3.3V 或悬空** | **默认开背光**；**低电平关背光**。若改 GPIO 控背光须保持高电平才亮 |
 
-手机连上热点后，浏览器打开 **`http://192.168.4.1/`** 进入**功能卡片页**；**摩斯**在 **`/morse`**，**七声简谱**在 **`/music`**，**屏幕 Hello** 在 **`/lcd`**（ESP 默认网关多为 `192.168.4.1`；若你改过 DHCP 以串口日志为准）。
+手机连上热点后，浏览器打开 **`http://192.168.4.1/`** 进入**功能卡片页**；**摩斯**在 **`/morse`**，**七声简谱**在 **`/music`**，**屏幕 Hello** 在 **`/lcd`**，**全屏图片**在 **`/tank`**（ESP 默认网关多为 `192.168.4.1`；若你改过 DHCP 以串口日志为准）。
+
+### 1.69" ST7789V3 本项目已验证参数（推荐基线）
+
+> 以下是当前工程里已验证「方向正确 + 图片可辨识 + 红蓝正常」的一组参数，建议作为初始值：
+
+- `LCD_PIXEL_CLOCK_HZ = 10MHz`
+- `LCD_GAP_Y = 20`
+- `LCD_SPI_MODE = 3`
+- `LCD_RGB565_LITTLE_ENDIAN = 1`
+- `LCD_ST7789_BGR = 0`
+- `LCD_INVERT_COLOR = 0`
+- `LCD_SWAP_XY = 1`
+- `LCD_MIRROR_X = 0`，`LCD_MIRROR_Y = 1`
+
+说明：
+- 图片显示链路（`/tank`）在 `lcd_st7789.c` 中对像素做了软件补偿（含反相兜底），用于抵消部分模组在颜色链路上的差异。
+- 如果你后续换屏或改了方向宏，可能需要重新微调 `LCD_ST7789_BGR` 与 `LCD_RGB565_LITTLE_ENDIAN`。
 
 **摩斯串约定（与解码一致）**
 
@@ -74,6 +92,10 @@ idf.py -p /dev/cu.wchusbserial10 build flash monitor
 - **431 Request Header Fields Too Large**：手机浏览器请求头（Cookie 等）可能很长。本工程已在 `sdkconfig` 将 `CONFIG_HTTPD_MAX_REQ_HDR_LEN` / `CONFIG_HTTPD_MAX_URI_LEN` 提到 **2048**；若仍出现可再在 `menuconfig → Component config → HTTP Server` 里加大。
 - **`httpd` 栈溢出 / 发送播放死机**：`play` 响应拼装曾占用过大栈空间；已在 `morse_http.c` 加大 `httpd` 任务栈（`stack_size=16384`）并把 JSON 缓冲改为静态区。若仍异常可把 `CONFIG_HTTPD_MAX_URI_LEN` 再加大或精简请求并发。
 - **连续发送**：播放请求进队列（默认 4 条），队列满时接口返回 `queue full`。
+- **图片偏色/像底片（`/tank`）**：优先看 `app_config.h` 的 `LCD_RGB565_LITTLE_ENDIAN` 与 `LCD_ST7789_BGR`。经验上：  
+  - 轮廓对但像底片：先确认 `LCD_RGB565_LITTLE_ENDIAN`（本工程推荐 `1`）  
+  - 红色显示成蓝色：切 `LCD_ST7789_BGR`（0/1 互换）  
+  - 降 SPI 时钟无变化：通常不是信号线，属于颜色映射链路问题
 
 Select the instructions depending on Espressif chip installed on your development board:
 
@@ -100,7 +122,11 @@ Below is short explanation of remaining files in the project folder.
 │   ├── morse_buzzer.c/.h     无源蜂鸣器 LEDC 驱动（可选）
 │   ├── morse_player.c/.h     WS2812 播放/预览/队列任务
 │   ├── morse_http.c/.h       HTTP 与内嵌网页
+│   ├── tank.png              全屏展示图片源文件
+│   ├── tank_rgb565.c         由脚本生成的 240×280 RGB565 数组
 │   └── wifi_softap.c/.h      SoftAP 配置与启动
+├── tools
+│   └── gen_tank_rgb565.py    将 tank.png 转为 tank_rgb565.c
 └── README.md                  This is the file you are currently reading
 ```
 

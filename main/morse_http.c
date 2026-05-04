@@ -1,5 +1,5 @@
 /**
- * morse_http.c —— ESP HTTP Server：卡片首页 /、/morse、/music、/lcd 与 /api 下各接口
+ * morse_http.c —— ESP HTTP Server：卡片首页 /、/morse、/music、/lcd、/mqtt、/tank 与 /api 下各接口
  *
  * 新手速览：
  *   - httpd_req_t *req：代表「当前这一条 HTTP 请求」，读 body、设响应头、发 body 都用它。
@@ -17,6 +17,7 @@
 #include "lcd_st7789.h"
 #include "morse_player.h"
 #include "wifi_softap.h"
+#include "mqtt_lan.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -58,6 +59,9 @@ static const char DASHBOARD_HTML[] =
     "<p>ST7789 TFT：点按钮在屏上显示 Hello World（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
     "<a class=\"card lcd\" href=\"/tank\"><h2>全屏 Tank</h2>"
     "<p>将 tank.png 缩放铺满 240×280 后整屏显示（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
+    "<a class=\"card\" href=\"/mqtt\"><h2>MQTT Hello（香橙派）</h2>"
+    "<p>香橙派 Zero3：Mosquitto + Node-RED；STA 入网后向 <code>test/hello</code> 发一条 <strong>Hello world</strong> 做连通测试。</p>"
+    "<span class=\"go\">点击进入 →</span></a>"
     "</div></body></html>";
 
 static const char MORSE_PAGE_HTML[] =
@@ -197,6 +201,39 @@ static const char LCD_PAGE_HTML[] =
     "try{var r=await fetch('/api/lcd_hello',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});"
     "var j=await r.json();"
     "if(j.ok){m.textContent='已刷新到屏幕。';}else{m.textContent='失败: '+(j.error||'未知');}"
+    "}catch(e){m.textContent='请求失败: '+e;}"
+    "b.disabled=false;};"
+    "</script></body></html>";
+
+static const char MQTT_PAGE_HTML[] =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>MQTT Hello</title>"
+    "<style>"
+    "body{font-family:system-ui,sans-serif;padding:16px;max-width:520px;margin:auto;background:#fff7ed;}"
+    "h1{font-size:1.25rem;color:#9a3412;}"
+    ".nav{margin-bottom:12px;font-size:15px;}"
+    ".hint{color:#555;font-size:14px;line-height:1.5;margin-bottom:16px;}"
+    "code{font-size:13px;background:#ffedd5;padding:2px 6px;border-radius:6px;}"
+    "#go{width:100%;padding:14px 16px;font-size:16px;border:none;border-radius:12px;font-weight:600;"
+    "background:#ea580c;color:#fff;touch-action:manipulation;}"
+    "#go:active{background:#c2410c;}"
+    "#go:disabled{opacity:.55;}"
+    "#msg{margin-top:14px;font-size:15px;color:#333;min-height:1.4em;}"
+    "</style></head><body>"
+    "<p class=\"nav\"><a href=\"/\">← 功能首页</a></p>"
+    "<h1>MQTT Hello world</h1>"
+    "<p class=\"hint\">默认 broker <code>" MQTT_BROKER_URI "</code>，主题 <code>" MQTT_TEST_TOPIC "</code>，负载 <code>" MQTT_TEST_PAYLOAD "</code>。"
+    "请先在 <code>app_config.h</code> 填写 <code>MQTT_STA_WIFI_SSID</code> / <code>MQTT_STA_WIFI_PASS</code>（与香橙派 <code>192.168.101.73</code> 同网段路由器），"
+    "手机仍连本机热点 <strong>" WIFI_SSID "</strong> 打开本页；STA 获 IP 后点按钮发布。</p>"
+    "<button type=\"button\" id=\"go\">发布一条 Hello world</button>"
+    "<p id=\"msg\"></p>"
+    "<script>"
+    "document.getElementById('go').onclick=async function(){"
+    "var b=this,m=document.getElementById('msg');b.disabled=true;m.textContent='发送中…';"
+    "try{var r=await fetch('/api/mqtt_hello',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});"
+    "var j=await r.json();"
+    "if(j.ok){m.textContent='已发布；可在香橙派 mosquitto_sub 或 Node-RED 查看。';}else{m.textContent='失败: '+(j.error||'未知');}"
     "}catch(e){m.textContent='请求失败: '+e;}"
     "b.disabled=false;};"
     "</script></body></html>";
@@ -358,6 +395,13 @@ static esp_err_t tank_page_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, TANK_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+/** GET /mqtt → 香橙派 Mosquitto 测试页 */
+static esp_err_t mqtt_page_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, MQTT_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
 /** POST /api/tone body: {\"note\":1..7}，蜂鸣器播单音 */
 static esp_err_t tone_post_handler(httpd_req_t *req)
 {
@@ -444,6 +488,39 @@ static esp_err_t lcd_hello_post_handler(httpd_req_t *req)
     }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/** POST /api/mqtt_hello —— 向局域网 Mosquitto 发布一条测试消息（body 可为 {}） */
+static esp_err_t mqtt_hello_post_handler(httpd_req_t *req)
+{
+    int len = req->content_len;
+    if (len < 0 || len > 128) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"bad length\"}");
+        return ESP_OK;
+    }
+    if (len > 0) {
+        char drain[128];
+        int r = httpd_req_recv(req, drain, len > (int)sizeof(drain) - 1 ? (int)sizeof(drain) - 1 : len);
+        if (r <= 0) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no body\"}");
+            return ESP_OK;
+        }
+    }
+
+    esp_err_t e = mqtt_lan_publish_test();
+    httpd_resp_set_type(req, "application/json");
+    if (e == ESP_OK) {
+        return httpd_resp_sendstr(req, "{\"ok\":true}");
+    }
+    if (e == ESP_ERR_INVALID_STATE) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"未配置 STA：请在 app_config.h 填写 MQTT_STA_WIFI_SSID\"}");
+    }
+    if (e == ESP_ERR_TIMEOUT) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"超时：STA 未获 IP 或 MQTT 无响应，查密码与 broker 地址\"}");
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"MQTT 发布失败\"}");
 }
 
 /** POST /api/lcd_tank —— ST7789 全屏显示 tank（body 可为 {}） */
@@ -659,7 +736,7 @@ void morse_http_start(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
     /* 默认 max_uri_handlers=8，本工程注册项多于 8，不加大则 /api/preview、decode、play 会注册失败→404 */
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 24;
     /* 默认 4096 对 decode/play 等 handler + 解析器偏紧，提到 16K 更稳 */
     config.stack_size = 16384;
 
@@ -676,6 +753,8 @@ void morse_http_start(void)
         httpd_register_uri_handler(server, &lcd_page);
         httpd_uri_t tank_page = {.uri = "/tank", .method = HTTP_GET, .handler = tank_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &tank_page);
+        httpd_uri_t mqtt_page = {.uri = "/mqtt", .method = HTTP_GET, .handler = mqtt_page_get_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &mqtt_page);
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &fav);
         httpd_uri_t tone = {.uri = "/api/tone", .method = HTTP_POST, .handler = tone_post_handler, .user_ctx = NULL};
@@ -686,6 +765,8 @@ void morse_http_start(void)
         httpd_register_uri_handler(server, &lcd_hello);
         httpd_uri_t lcd_tank = {.uri = "/api/lcd_tank", .method = HTTP_POST, .handler = lcd_tank_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &lcd_tank);
+        httpd_uri_t mqtt_hello = {.uri = "/api/mqtt_hello", .method = HTTP_POST, .handler = mqtt_hello_post_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(server, &mqtt_hello);
         httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &preview);
         httpd_uri_t decode = {.uri = "/api/decode", .method = HTTP_POST, .handler = decode_post_handler, .user_ctx = NULL};

@@ -51,6 +51,18 @@
 /** 网页/API 传入的摩斯字符串最大长度（含结尾 \\0 前的字符）。超长会被截断或拒绝，视各接口校验而定。 */
 #define MORSE_PATTERN_MAX     256
 
+/**
+ * MQTT 测试（香橙派等局域网 Mosquitto）：ESP 须与 broker 同网段。
+ * 固件仍为 SoftAP + HTTP；若下面 SSID 非空，则同时以 STA 连入你家路由器（APSTA），
+ * STA 拿到 IP 后可通过「MQTT Hello」页向 broker 发布一条消息。
+ */
+#define MQTT_STA_WIFI_SSID    "高端工程部"
+#define MQTT_STA_WIFI_PASS    "apex2016*#"
+#define MQTT_BROKER_URI       "mqtt://192.168.101.73:1883"
+#define MQTT_TEST_TOPIC       "test/hello"
+#define MQTT_TEST_PAYLOAD     "Hello world"
+/* 板端 Mosquitto 若只监听 127.0.0.1，局域网设备连不上；需在 mosquitto.conf 增加对 0.0.0.0 或网卡 IP 的 listener。 */
+
 /* -------------------------------------------------------------------------- */
 /* TFT：IC **ST7789V3**，**240(RGB)×280**，丝印常见 **1.69 TFT V1.1**（与 v1.4 同类） */
 /* 引脚说明（排针 1→8，与卖家「引脚说明」表一致）：                            */

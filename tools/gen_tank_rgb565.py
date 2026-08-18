@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""将 main/tank.png 缩放铺满 LCD_H_RES×LCD_V_RES 后生成 main/tank_rgb565.c。"""
+"""将 assets/tank.png 缩放铺满 LCD 分辨率后生成 components/lcd/tank_rgb565.c。"""
 from __future__ import annotations
 
 import argparse
@@ -13,8 +13,8 @@ except ImportError as e:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--src", type=Path, default=Path("main/tank.png"))
-    p.add_argument("--out", type=Path, default=Path("main/tank_rgb565.c"))
+    p.add_argument("--src", type=Path, default=Path("assets/tank.png"))
+    p.add_argument("--out", type=Path, default=Path("components/lcd/tank_rgb565.c"))
     p.add_argument("--w", type=int, default=240)
     p.add_argument("--h", type=int, default=280)
     args = p.parse_args()

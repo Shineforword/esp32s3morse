@@ -255,7 +255,7 @@ static const char TANK_PAGE_HTML[] =
     "</style></head><body>"
     "<p class=\"nav\"><a href=\"/\">← 功能首页</a></p>"
     "<h1>全屏 tank.png</h1>"
-    "<p class=\"hint\">图源 <code>main/tank.png</code>，固件内为 240×280 RGB565。色彩可在 <code>app_config.h</code> 调 "
+    "<p class=\"hint\">图源 <code>assets/tank.png</code>，固件内为 240×280 RGB565。色彩可在 <code>app_config.h</code> 调 "
     "<code>LCD_IMAGE_COMPENSATE_INVERT</code> / <code>LCD_IMAGE_SWAP_RB</code>。</p>"
     "<button type=\"button\" id=\"go\">在屏幕上全屏显示 Tank</button>"
     "<p id=\"msg\"></p>"

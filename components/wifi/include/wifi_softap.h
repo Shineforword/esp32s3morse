@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /** 手机搜到的 Wi‑Fi 名称 */
 #define WIFI_SSID      "ESP32-Morse"

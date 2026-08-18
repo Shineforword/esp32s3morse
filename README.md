@@ -5,16 +5,16 @@
 
 本工程在 ESP-IDF `hello_world` 基础上，实现 **手机连板子热点 → 浏览器控制板载 WS2812**：
 
-- **Wi‑Fi SoftAP**：SSID `ESP32-Morse`，**开放热点、无密码**（可在 `main/wifi_softap.h` 中改 `WIFI_SSID`；若要加密，将 `WIFI_PASS` 设为至少 8 位）
+- **Wi‑Fi SoftAP**：SSID `ESP32-Morse`，**开放热点、无密码**（可在 `components/wifi/include/wifi_softap.h` 中改 `WIFI_SSID`；若要加密，将 `WIFI_PASS` 设为至少 8 位）
 - **内置网页**：短按大按钮 = 点（·），长按（≥280ms）= 划（—）；另有「字母间 /」「单词间 //」「退格」「清空」「发送播放」
 - **灯效**：常态 **黄灯**；**每输入一个点/划**会请求 `POST /api/preview`，板子 **点红灯、划绿灯** 闪一下（与整段播放互斥）；点「发送播放」后整段 **点红划绿** 按摩斯播放，结束回黄灯
 - **无源蜂鸣器（可选）**：`app_config.h` 中 `MORSE_BUZZER_GPIO`（默认 **GPIO4**）接三脚模块的 **I/O**，**VCC→3V3**、**GND→GND**；用 **LEDC PWM** 发声，与点/划亮灯时间同步。低电平导通模块设 `MORSE_BUZZER_ACTIVE_LOW 1`，否则试 `0`。不用蜂鸣器将 `MORSE_BUZZER_GPIO` 设为 **-1**
-- **TFT（SPI）**：小板丝印多为 **1.69 TFT V1.1**（与 v1.4 同类），驱动 **ST7789V3**，**240(RGB)×280**。首页 **「屏幕 Hello」** → **`/lcd`**，点按钮 **`POST /api/lcd_hello`**（`body` 可为 `{}`）刷新画面，首次请求时初始化 SPI。引脚见 `main/app_config.h` 的 `LCD_PIN_*`，勿与灯 **GPIO48**、蜂鸣器 **GPIO4** 冲突。若 **只有背光**：先查接线与共地。1.69 / 240×280 在 ST7789 的 **320 行**里常垂直居中，**行偏移应为 (320−280)/2=20**（工程里默认 **`LCD_GAP_Y 20`**）。另可参考 Adafruit 通用 ST7789 初始化打开 **反相（`LCD_INVERT_COLOR 1`）**。仍不行再试 **`LCD_SPI_MODE`**（0/3）、**`LCD_RGB565_LITTLE_ENDIAN`**（0/1）、**`LCD_ST7789_BGR`**、**`LCD_SPI_HOST`**（SPI2/SPI3）、**`LCD_SWAP_XY` / `LCD_MIRROR_*`**。固件已默认开启 **`LCD_ST7789_LVGL_EXTRA_INIT`**（补发 LVGL 常用电源/伽马）；若异常可改 **0** 关闭。硬件上务必核对 **SDA=数据线(MOSI)、SCL=时钟**，**勿与 DC 对调**。
-- **全屏图片（Tank）**：首页 **「全屏 Tank」** → **`/tank`**，点按钮调用 **`POST /api/lcd_tank`**，在 ST7789 全屏显示 `main/tank.png`（离线转成 `main/tank_rgb565.c`）。换图可运行 `python3 tools/gen_tank_rgb565.py` 重新生成数组。
+- **TFT（SPI）**：小板丝印多为 **1.69 TFT V1.1**（与 v1.4 同类），驱动 **ST7789V3**，**240(RGB)×280**。首页 **「屏幕 Hello」** → **`/lcd`**，点按钮 **`POST /api/lcd_hello`**（`body` 可为 `{}`）刷新画面，首次请求时初始化 SPI。引脚见 `components/board/include/app_config.h` 的 `LCD_PIN_*`，勿与灯 **GPIO48**、蜂鸣器 **GPIO4** 冲突。若 **只有背光**：先查接线与共地。1.69 / 240×280 在 ST7789 的 **320 行**里常垂直居中，**行偏移应为 (320−280)/2=20**（工程里默认 **`LCD_GAP_Y 20`**）。另可参考 Adafruit 通用 ST7789 初始化打开 **反相（`LCD_INVERT_COLOR 1`）**。仍不行再试 **`LCD_SPI_MODE`**（0/3）、**`LCD_RGB565_LITTLE_ENDIAN`**（0/1）、**`LCD_ST7789_BGR`**、**`LCD_SPI_HOST`**（SPI2/SPI3）、**`LCD_SWAP_XY` / `LCD_MIRROR_*`**。固件已默认开启 **`LCD_ST7789_LVGL_EXTRA_INIT`**（补发 LVGL 常用电源/伽马）；若异常可改 **0** 关闭。硬件上务必核对 **SDA=数据线(MOSI)、SCL=时钟**，**勿与 DC 对调**。
+- **全屏图片（Tank）**：首页 **「全屏 Tank」** → **`/tank`**，点按钮调用 **`POST /api/lcd_tank`**，在 ST7789 全屏显示 `assets/tank.png`（离线转成 `components/lcd/tank_rgb565.c`）。换图可运行 `python3 tools/gen_tank_rgb565.py` 重新生成数组。
 - **多页面**：`/` 为功能卡片；`/music` 为简谱 1～7 与《两只老虎》按钮；**`POST /api/tone`**，`body`：`{"note":1}`～`{"note":7}`；**`POST /api/play_twotigers`**（可 body `{}`）。均与摩斯共用蜂鸣器互斥；旋律节奏见 `morse_buzzer.c` 中 `MELODY_NOTE_MS` / `MELODY_GAP_MS`
 - **解码**：`POST /api/decode` 根据当前摩斯串 **实时** 返回 `decoded`（输入点/划、`/`、`//`、退格后自动刷新）；`POST /api/play` 仍会整段播放并返回解码结果
 
-> 板载 WS2812 数据脚为 **GPIO48**（与 `main/app_config.h` 中 `MORSE_LED_GPIO` 一致）。
+> 板载 WS2812 数据脚为 **GPIO48**（与 `components/board/include/app_config.h` 中 `MORSE_LED_GPIO` 一致）。
 
 **1.69 / ST7789V3（240×280）与 ESP32-S3 接线（与 `app_config.h` 中 `LCD_PIN_*` 一致）**
 
@@ -79,8 +79,8 @@ idf.py -p /dev/cu.wchusbserial10 build flash monitor
 
 3) 可选：调整热点名、摩斯速度/亮度
 
-- 热点：`main/wifi_softap.h` 中 `WIFI_SSID`；`WIFI_PASS` 为空则无密码，设 ≥8 位则启用 WPA2
-- 灯与时序：`main/app_config.h` 中 `MORSE_UNIT_MS`、`MORSE_LED_BRIGHT_PLAY`、`MORSE_LED_BRIGHT_IDLE` 等
+- 热点：`components/wifi/include/wifi_softap.h` 中 `WIFI_SSID`；`WIFI_PASS` 为空则无密码，设 ≥8 位则启用 WPA2
+- 灯与时序：`components/board/include/app_config.h` 中 `MORSE_UNIT_MS`、`MORSE_LED_BRIGHT_PLAY`、`MORSE_LED_BRIGHT_IDLE` 等
 
 ### 注意事项（很重要）
 
@@ -103,34 +103,25 @@ Select the instructions depending on Espressif chip installed on your developmen
 - [ESP32-S2 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/get-started/index.html)
 
 
-## Example folder contents
+## 工程目录
 
-The project **hello_world** entry point is [main.c](main/main.c); morse / Wi‑Fi / HTTP logic lives in additional `main/*.c` files (see tree below). Sources are in folder [main](main).
-
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt` files that provide set of directives and instructions describing the project's source files and targets (executable, library, or both).
-
-Below is short explanation of remaining files in the project folder.
+业务按 ESP-IDF 组件拆分；细节见 [docs/工程结构.md](docs/工程结构.md)。
 
 ```
-├── CMakeLists.txt
-├── pytest_hello_world.py      Python script used for automated testing
-├── main
-│   ├── CMakeLists.txt
-│   ├── app_config.h          灯 GPIO、时序、缓冲长度等
-│   ├── main.c                入口：NVS、灯带、子模块初始化
-│   ├── morse_decode.c/.h     摩斯表与 decode 文本
-│   ├── morse_buzzer.c/.h     无源蜂鸣器 LEDC 驱动（可选）
-│   ├── morse_player.c/.h     WS2812 播放/预览/队列任务
-│   ├── morse_http.c/.h       HTTP 与内嵌网页
-│   ├── tank.png              全屏展示图片源文件
-│   ├── tank_rgb565.c         由脚本生成的 240×280 RGB565 数组
-│   └── wifi_softap.c/.h      SoftAP 配置与启动
-├── tools
-│   └── gen_tank_rgb565.py    将 tank.png 转为 tank_rgb565.c
-└── README.md                  This is the file you are currently reading
+├── CMakeLists.txt            project(esp32s3_morse)
+├── main/main.c               入口：NVS → 灯 → player → Wi‑Fi → HTTP
+├── components/
+│   ├── board/                app_config + WS2812
+│   ├── wifi/                 SoftAP / APSTA
+│   ├── mqtt_lan/             局域网 MQTT 测试
+│   ├── morse/                解码 + 灯效播放
+│   ├── buzzer/               蜂鸣器 / 简谱
+│   ├── lcd/                  ST7789 + tank 数组
+│   └── web/                  HTTP 门户与 /api
+├── assets/tank.png           全屏图源
+├── tools/gen_tank_rgb565.py
+└── docs/
 ```
-
-For more information on structure and contents of ESP-IDF projects, please refer to Section [Build System](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html) of the ESP-IDF Programming Guide.
 
 ## Troubleshooting
 

@@ -9,10 +9,14 @@
 
 #include "morse_player.h"
 
+#include "sdkconfig.h"
+
 #include "app_config.h"
 #include "morse_buzzer.h"
-#include "lcd_st7789.h"
 #include "morse_decode.h"
+#if CONFIG_DEMO_LCD
+#include "lcd_st7789.h"
+#endif
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -151,12 +155,14 @@ static void morse_player_task(void *arg)
             continue;
         }
         ESP_LOGI(TAG, "play: %s", msg.pattern);
+#if CONFIG_DEMO_LCD
         {
             char dec[128];
             morse_decode_pattern(msg.pattern, dec, sizeof(dec));
             /* LCD 在占灯互斥锁之前刷完，避免长时间占锁；SPI 与 WiFi 共存靠 lcd 内 yield + 互斥 */
             (void)lcd_st7789_show_morse_live(msg.pattern, dec);
         }
+#endif
         xSemaphoreTake(s_led_mutex, portMAX_DELAY);
         morse_buzzer_force_idle();
         morse_play_pattern(s_strip, msg.pattern, MORSE_UNIT_MS, MORSE_LED_BRIGHT_PLAY);

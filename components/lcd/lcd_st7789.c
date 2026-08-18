@@ -1,4 +1,6 @@
 #include "lcd_st7789.h"
+
+#include "sdkconfig.h"
 #include "app_config.h"
 
 #include "driver/spi_master.h"
@@ -14,9 +16,11 @@
 #include <string.h>
 
 extern const uint8_t font8x8_basic[128][8];
+#if CONFIG_DEMO_TANK
 extern const int tank_img_w;
 extern const int tank_img_h;
 extern const uint16_t tank_img_rgb565[];
+#endif
 
 static const char *TAG = "lcd_st7789";
 
@@ -118,6 +122,7 @@ static void paint_hello(void)
     draw_string(s_panel, x0, y0, msg, fg, bg);
 }
 
+#if CONFIG_DEMO_TANK
 static void paint_tank(void)
 {
     int w = tank_img_w;
@@ -140,6 +145,7 @@ static void paint_tank(void)
         }
     }
 }
+#endif
 
 #define LCD_MORSE_LINE_CHARS (LCD_H_RES / 8)
 
@@ -434,6 +440,9 @@ esp_err_t lcd_st7789_show_hello(void)
 
 esp_err_t lcd_st7789_show_tank(void)
 {
+#if !CONFIG_DEMO_TANK
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     esp_err_t err = lcd_st7789_ensure_init();
     if (err != ESP_OK) {
         return err;
@@ -445,6 +454,7 @@ esp_err_t lcd_st7789_show_tank(void)
     lcd_draw_unlock();
     ESP_LOGI(TAG, "Tank fullscreen painted");
     return ESP_OK;
+#endif
 }
 
 esp_err_t lcd_st7789_show_morse_live(const char *pattern, const char *decoded)

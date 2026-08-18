@@ -1,0 +1,38 @@
+menu "学习示例开关 (Demo Features)"
+
+    config DEMO_MORSE
+        bool "摩斯控制 (WS2812 + 解码 + 播放)"
+        default y
+        help
+            网页 /morse 与 /api/preview、/api/decode、/api/play。
+            依赖板载灯与蜂鸣器组件。
+
+    config DEMO_MUSIC
+        bool "七声简谱 / 两只老虎"
+        default y
+        help
+            网页 /music 与 /api/tone、/api/play_twotigers。
+            依赖蜂鸣器。
+
+    config DEMO_LCD
+        bool "ST7789 屏幕 (Hello / 摩斯上屏)"
+        default y
+        help
+            网页 /lcd 与 /api/lcd_hello；摩斯播放时可刷屏。
+            不含全屏 Tank 大图（见下一选项）。
+
+    config DEMO_TANK
+        bool "全屏 Tank 图片 (体积大)"
+        depends on DEMO_LCD
+        default y
+        help
+            编译 tank_rgb565.c（约数百 KB Flash），网页 /tank。
+            学习屏驱时可只开 DEMO_LCD、关掉本项以加快编译、缩小固件。
+
+    config DEMO_MQTT
+        bool "MQTT 局域网测试"
+        default y
+        help
+            网页 /mqtt 与 /api/mqtt_hello；SoftAP+STA 连路由器发测试消息。
+
+endmenu

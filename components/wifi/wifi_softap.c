@@ -6,6 +6,7 @@
 
 #include "wifi_softap.h"
 
+#include "sdkconfig.h"
 #include "app_config.h"
 
 #include "esp_event.h"
@@ -44,7 +45,11 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base, int32_t eve
 
 bool wifi_sta_lan_is_configured(void)
 {
+#if CONFIG_DEMO_MQTT
     return MQTT_STA_WIFI_SSID[0] != '\0';
+#else
+    return false;
+#endif
 }
 
 bool wifi_sta_wait_for_ip(uint32_t timeout_ms)

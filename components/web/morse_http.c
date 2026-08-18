@@ -11,13 +11,23 @@
 
 #include "morse_http.h"
 
+#include "sdkconfig.h"
 #include "app_config.h"
-#include "morse_buzzer.h"
-#include "morse_decode.h"
-#include "lcd_st7789.h"
-#include "morse_player.h"
 #include "wifi_softap.h"
+
+#if CONFIG_DEMO_MORSE
+#include "morse_decode.h"
+#include "morse_player.h"
+#endif
+#if CONFIG_DEMO_MORSE || CONFIG_DEMO_MUSIC
+#include "morse_buzzer.h"
+#endif
+#if CONFIG_DEMO_LCD
+#include "lcd_st7789.h"
+#endif
+#if CONFIG_DEMO_MQTT
 #include "mqtt_lan.h"
+#endif
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -49,21 +59,33 @@ static const char DASHBOARD_HTML[] =
     ".card .go{font-size:12px;color:#888;margin-top:10px;}"
     "</style></head><body>"
     "<h1>功能</h1>"
-    "<p class=\"hint\">已连热点 <strong>" WIFI_SSID "</strong> 后，点卡片进入。</p>"
+    "<p class=\"hint\">已连热点 <strong>" WIFI_SSID "</strong> 后，点卡片进入。"
+    "（未编译进固件的示例不会出现在下方。）</p>"
     "<div class=\"grid\">"
+#if CONFIG_DEMO_MORSE
     "<a class=\"card\" href=\"/morse\"><h2>摩斯控制</h2>"
     "<p>网页输入点划，灯点红划绿，蜂鸣器同步嘀嗒。</p><span class=\"go\">点击进入 →</span></a>"
+#endif
+#if CONFIG_DEMO_MUSIC
     "<a class=\"card\" href=\"/music\"><h2>七声简谱</h2>"
     "<p>单音 1～7；《两只老虎》整曲（蜂鸣器简易版）。</p><span class=\"go\">点击进入 →</span></a>"
+#endif
+#if CONFIG_DEMO_LCD
     "<a class=\"card lcd\" href=\"/lcd\"><h2>屏幕 Hello</h2>"
     "<p>ST7789 TFT：点按钮在屏上显示 Hello World（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
+#endif
+#if CONFIG_DEMO_TANK
     "<a class=\"card lcd\" href=\"/tank\"><h2>全屏 Tank</h2>"
     "<p>将 tank.png 缩放铺满 240×280 后整屏显示（首次会初始化 SPI）。</p><span class=\"go\">点击进入 →</span></a>"
+#endif
+#if CONFIG_DEMO_MQTT
     "<a class=\"card\" href=\"/mqtt\"><h2>MQTT Hello（香橙派）</h2>"
     "<p>香橙派 Zero3：Mosquitto + Node-RED；STA 入网后向 <code>test/hello</code> 发一条 <strong>Hello world</strong> 做连通测试。</p>"
     "<span class=\"go\">点击进入 →</span></a>"
+#endif
     "</div></body></html>";
 
+#if CONFIG_DEMO_MORSE
 static const char MORSE_PAGE_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -131,7 +153,9 @@ static const char MORSE_PAGE_HTML[] =
     "};"
     "sync();refreshDecode();"
     "</script></body></html>";
+#endif /* CONFIG_DEMO_MORSE */
 
+#if CONFIG_DEMO_MUSIC
 static const char MUSIC_PAGE_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -174,7 +198,9 @@ static const char MUSIC_PAGE_HTML[] =
     "catch(e){}b.disabled=false;}"
     "document.getElementById('tiger').onclick=function(){playMelody('/api/play_twotigers',this);};"
     "</script></body></html>";
+#endif /* CONFIG_DEMO_MUSIC */
 
+#if CONFIG_DEMO_LCD
 static const char LCD_PAGE_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -204,7 +230,9 @@ static const char LCD_PAGE_HTML[] =
     "}catch(e){m.textContent='请求失败: '+e;}"
     "b.disabled=false;};"
     "</script></body></html>";
+#endif /* CONFIG_DEMO_LCD */
 
+#if CONFIG_DEMO_MQTT
 static const char MQTT_PAGE_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -237,7 +265,9 @@ static const char MQTT_PAGE_HTML[] =
     "}catch(e){m.textContent='请求失败: '+e;}"
     "b.disabled=false;};"
     "</script></body></html>";
+#endif /* CONFIG_DEMO_MQTT */
 
+#if CONFIG_DEMO_TANK
 static const char TANK_PAGE_HTML[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -268,10 +298,11 @@ static const char TANK_PAGE_HTML[] =
     "}catch(e){m.textContent='请求失败: '+e;}"
     "b.disabled=false;};"
     "</script></body></html>";
-
+#endif /* CONFIG_DEMO_TANK */
 /**
  * 解析 JSON 体 {\"note\":3} 或 {\"note\": 7}，note 为 1～7。
  */
+#if CONFIG_DEMO_MUSIC
 static bool json_extract_note(const char *body, int *note_out)
 {
     const char *p = strstr(body, "\"note\"");
@@ -292,7 +323,9 @@ static bool json_extract_note(const char *body, int *note_out)
     *note_out = *p - '0';
     return true;
 }
+#endif
 
+#if CONFIG_DEMO_MORSE
 /**
  * 从 POST body 里解析 {"sym":"."} 或 {"sym":"-"}。
  * 非严格 JSON 解析器，仅适合本工程固定格式。
@@ -359,6 +392,7 @@ static bool json_extract_pattern(const char *body, char *out, size_t out_len)
     out[i] = '\0';
     return true;
 }
+#endif /* CONFIG_DEMO_MORSE */
 
 /** GET / → 卡片功能首页 */
 static esp_err_t root_get_handler(httpd_req_t *req)
@@ -367,41 +401,52 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+#if CONFIG_DEMO_MORSE
 /** GET /morse → 摩斯控制页 */
 static esp_err_t morse_page_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, MORSE_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
+#endif
 
+#if CONFIG_DEMO_MUSIC
 /** GET /music → 七声简谱页 */
 static esp_err_t music_page_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, MUSIC_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
+#endif
 
+#if CONFIG_DEMO_LCD
 /** GET /lcd → TFT Hello World 页 */
 static esp_err_t lcd_page_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, LCD_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
+#endif
 
+#if CONFIG_DEMO_TANK
 /** GET /tank → 全屏 tank 图说明页 */
 static esp_err_t tank_page_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, TANK_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
+#endif
 
+#if CONFIG_DEMO_MQTT
 /** GET /mqtt → 香橙派 Mosquitto 测试页 */
 static esp_err_t mqtt_page_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, MQTT_PAGE_HTML, HTTPD_RESP_USE_STRLEN);
 }
+#endif
 
+#if CONFIG_DEMO_MUSIC
 /** POST /api/tone body: {\"note\":1..7}，蜂鸣器播单音 */
 static esp_err_t tone_post_handler(httpd_req_t *req)
 {
@@ -462,6 +507,9 @@ static esp_err_t twotigers_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+#endif /* CONFIG_DEMO_MUSIC */
+
+#if CONFIG_DEMO_LCD
 /** POST /api/lcd_hello —— ST7789 清屏并显示 Hello World（body 可为 {}） */
 static esp_err_t lcd_hello_post_handler(httpd_req_t *req)
 {
@@ -490,6 +538,9 @@ static esp_err_t lcd_hello_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+#endif /* CONFIG_DEMO_LCD */
+
+#if CONFIG_DEMO_MQTT
 /** POST /api/mqtt_hello —— 向局域网 Mosquitto 发布一条测试消息（body 可为 {}） */
 static esp_err_t mqtt_hello_post_handler(httpd_req_t *req)
 {
@@ -523,6 +574,9 @@ static esp_err_t mqtt_hello_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"MQTT 发布失败\"}");
 }
 
+#endif /* CONFIG_DEMO_MQTT */
+
+#if CONFIG_DEMO_TANK
 /** POST /api/lcd_tank —— ST7789 全屏显示 tank（body 可为 {}） */
 static esp_err_t lcd_tank_post_handler(httpd_req_t *req)
 {
@@ -551,6 +605,8 @@ static esp_err_t lcd_tank_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+#endif /* CONFIG_DEMO_TANK */
+
 /** GET /favicon.ico → 返回 204，减少浏览器反复请求时的无意义 404 日志 */
 static esp_err_t favicon_get_handler(httpd_req_t *req)
 {
@@ -558,6 +614,7 @@ static esp_err_t favicon_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, "", 0);
 }
 
+#if CONFIG_DEMO_MORSE
 /**
  * POST /api/preview —— 用户每输入一个点或划，网页调用；板子点红、划绿闪一下作反馈。
  * 若整段正在播放（互斥锁占用），返回 JSON busy，不闪灯。
@@ -591,7 +648,9 @@ static esp_err_t preview_post_handler(httpd_req_t *req)
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"busy\":true}");
     }
+#if CONFIG_DEMO_LCD
     (void)lcd_st7789_show_morse_preview(sym);
+#endif
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -628,7 +687,9 @@ static esp_err_t decode_post_handler(httpd_req_t *req)
     char decoded[128];
     morse_decode_pattern(pattern, decoded, sizeof(decoded));
 
+#if CONFIG_DEMO_LCD
     (void)lcd_st7789_show_morse_live(pattern, decoded);
+#endif
 
     /* 把 decoded 嵌入 JSON 字符串字段前，必须对 " 与 \\ 转义 */
     char dec_esc[sizeof(decoded) * 2];
@@ -695,7 +756,9 @@ static esp_err_t play_post_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+#if CONFIG_DEMO_LCD
     (void)lcd_st7789_show_morse_live(pattern, decoded);
+#endif
 
     static char s_esc[MORSE_PATTERN_MAX * 2];
     static char s_dec_esc[128 * 2];
@@ -730,49 +793,68 @@ static esp_err_t play_post_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, s_play_resp);
 }
+#endif /* CONFIG_DEMO_MORSE */
+
 
 void morse_http_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
-    /* 默认 max_uri_handlers=8，本工程注册项多于 8，不加大则 /api/preview、decode、play 会注册失败→404 */
     config.max_uri_handlers = 24;
-    /* 默认 4096 对 decode/play 等 handler + 解析器偏紧，提到 16K 更稳 */
     config.stack_size = 16384;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
-        /* user_ctx 可传自定义指针；本工程各 handler 不需要 */
         httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &root);
+#if CONFIG_DEMO_MORSE
         httpd_uri_t morse_page = {.uri = "/morse", .method = HTTP_GET, .handler = morse_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &morse_page);
+#endif
+#if CONFIG_DEMO_MUSIC
         httpd_uri_t music_page = {.uri = "/music", .method = HTTP_GET, .handler = music_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &music_page);
+#endif
+#if CONFIG_DEMO_LCD
         httpd_uri_t lcd_page = {.uri = "/lcd", .method = HTTP_GET, .handler = lcd_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &lcd_page);
+#endif
+#if CONFIG_DEMO_TANK
         httpd_uri_t tank_page = {.uri = "/tank", .method = HTTP_GET, .handler = tank_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &tank_page);
+#endif
+#if CONFIG_DEMO_MQTT
         httpd_uri_t mqtt_page = {.uri = "/mqtt", .method = HTTP_GET, .handler = mqtt_page_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &mqtt_page);
+#endif
         httpd_uri_t fav = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &fav);
+#if CONFIG_DEMO_MUSIC
         httpd_uri_t tone = {.uri = "/api/tone", .method = HTTP_POST, .handler = tone_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &tone);
         httpd_uri_t twotigers = {.uri = "/api/play_twotigers", .method = HTTP_POST, .handler = twotigers_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &twotigers);
+#endif
+#if CONFIG_DEMO_LCD
         httpd_uri_t lcd_hello = {.uri = "/api/lcd_hello", .method = HTTP_POST, .handler = lcd_hello_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &lcd_hello);
+#endif
+#if CONFIG_DEMO_TANK
         httpd_uri_t lcd_tank = {.uri = "/api/lcd_tank", .method = HTTP_POST, .handler = lcd_tank_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &lcd_tank);
+#endif
+#if CONFIG_DEMO_MQTT
         httpd_uri_t mqtt_hello = {.uri = "/api/mqtt_hello", .method = HTTP_POST, .handler = mqtt_hello_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &mqtt_hello);
+#endif
+#if CONFIG_DEMO_MORSE
         httpd_uri_t preview = {.uri = "/api/preview", .method = HTTP_POST, .handler = preview_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &preview);
         httpd_uri_t decode = {.uri = "/api/decode", .method = HTTP_POST, .handler = decode_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &decode);
         httpd_uri_t play = {.uri = "/api/play", .method = HTTP_POST, .handler = play_post_handler, .user_ctx = NULL};
         httpd_register_uri_handler(server, &play);
+#endif
         ESP_LOGI(TAG, "HTTP server started");
         return;
     }

@@ -1,0 +1,6 @@
+# 学习示例默认全开（与原先行为一致）；用 idf.py menuconfig 按需关掉
+CONFIG_DEMO_MORSE=y
+CONFIG_DEMO_MUSIC=y
+CONFIG_DEMO_LCD=y
+CONFIG_DEMO_TANK=y
+CONFIG_DEMO_MQTT=y

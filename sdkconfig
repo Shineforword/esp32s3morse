@@ -468,6 +468,16 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# 学习示例开关 (Demo Features)
+#
+CONFIG_DEMO_MORSE=y
+CONFIG_DEMO_MUSIC=y
+CONFIG_DEMO_LCD=y
+CONFIG_DEMO_TANK=y
+CONFIG_DEMO_MQTT=y
+# end of 学习示例开关 (Demo Features)
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEFAULT=y

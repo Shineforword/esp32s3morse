@@ -105,18 +105,19 @@ Select the instructions depending on Espressif chip installed on your developmen
 
 ## 工程目录
 
-业务按 ESP-IDF 组件拆分；细节见 [docs/工程结构.md](docs/工程结构.md)。
+业务按 ESP-IDF 组件拆分；细节见 [docs/工程结构.md](docs/工程结构.md)。功能可用 `idf.py menuconfig` →「学习示例开关」自由组合（关掉则不编译），见 [docs/调试编译烧录.md](docs/调试编译烧录.md)。
 
 ```
 ├── CMakeLists.txt            project(esp32s3_morse)
-├── main/main.c               入口：NVS → 灯 → player → Wi‑Fi → HTTP
+├── main/main.c               入口：NVS →（按开关）灯/蜂鸣器 → Wi‑Fi → HTTP
+├── main/Kconfig.projbuild    学习示例开关
 ├── components/
 │   ├── board/                app_config + WS2812
 │   ├── wifi/                 SoftAP / APSTA
 │   ├── mqtt_lan/             局域网 MQTT 测试
 │   ├── morse/                解码 + 灯效播放
 │   ├── buzzer/               蜂鸣器 / 简谱
-│   ├── lcd/                  ST7789 + tank 数组
+│   ├── lcd/                  ST7789 + tank 数组（可关）
 │   └── web/                  HTTP 门户与 /api
 ├── assets/tank.png           全屏图源
 ├── tools/gen_tank_rgb565.py

@@ -3,3 +3,4 @@
 /dependencies.lock
 .DS_Store
 /.vscode
+.cache/

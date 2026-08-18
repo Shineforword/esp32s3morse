@@ -1,0 +1,15 @@
+# clangd 用 Clang 解析代码，ESP-IDF 的 compile_commands.json 里是 GCC 参数。
+# 去掉 Clang 不认识的选项，消除 drv_unknown_argument，不影响 idf.py 实际编译。
+CompileFlags:
+  CompilationDatabase: build
+  Remove:
+    - -mlongcalls
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -fno-shrink-wrap
+    - -fzero-initialized-in-bss
+    - -mtext-section-literals
+    - -mdisable-hardware-atomics
+    - -fno-reorder-blocks
+    - -mfix-esp32-psram-cache-issue
+    - -mfix-esp32-psram-cache-strategy=*

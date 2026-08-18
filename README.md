@@ -64,7 +64,7 @@
 1) 进入工程目录并加载 ESP-IDF 环境（每个新终端都要做一次）
 
 ```bash
-cd "/Users/zhouguan/Desktop/esp32/esp32-4"
+cd "/Users/zhouguan/Desktop/esp32/ESP32-S3"
 . "$HOME/esp/v5.1.2/esp-idf/export.sh"
 ```
 

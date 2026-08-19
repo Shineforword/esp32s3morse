@@ -465,6 +465,24 @@ const esp_app_desc_t *d = esp_app_get_description();
 
 ---
 
+## 6. 评审记录与落地修正（2026-08-18 评审后补入）
+
+> 评审结论：本方案整体合理、**无原则性错误**，核心防砖链路（双槽隔离 → `esp_ota_end` 校验 → 仅成功才切槽 → App Rollback → USB 兜底）与 ESP-IDF 官方推荐做法一致，可按 §4.1 checklist 直接落地。以下为评审发现、**实现时必须落实的修正点**（按重要性排序）；其余内容保持原样。已对照本仓库现状核对：分区表现仅 `factory` 4MB、Flash 16MB、custom 分区表指向 `partitions_4mb.csv`、rollback 与 `CONFIG_OTA_ALLOW_HTTP` 均未开、`morse_http.c` 现 `max_uri_handlers=24` / `stack_size=16384`，均与上文假设一致。
+
+| # | 修正点 | 说明与做法 |
+|---|--------|-----------|
+| 1 | **版本号当前不可用，先补** | 根 `CMakeLists.txt` 现为 `project(esp32s3_morse)`（无 VERSION），`CONFIG_APP_PROJECT_VER_FROM_CONFIG` 未开 → `esp_app_desc` 的 `d->version` 恒为 `"1"`，OTA 页版本显示（§4.2）无意义。做法：`project(esp32s3_morse VERSION 0.1.0)`，或 menuconfig 开 `CONFIG_APP_PROJECT_VER_FROM_CONFIG` 手填。 |
+| 2 | `esp_ota_begin` 建议带 `ESP_OTA_WITH_SIZE` | 网页上传时从 `Content-Length` 取大小传入；镜像比槽大时 `begin` 即拒绝，避免写满槽才失败，截断流也能更早判定。 |
+| 3 | 上传路径先验镜像头再写 | 写前先读前 8 字节（magic `0xE9` + chip id），错文件秒拒、少写垃圾进槽、减少 flash 磨损；`esp_ota_end` 仍作最终兜底。 |
+| 4 | **httpd 单线程：上传期间其它页面阻塞** | `esp_http_server` 默认单工作线程，上传几十秒内 `/morse`、`/music` 等全部无响应（学习工程可接受，但应知晓）。OTA handler 必须**边收边写、循环读完整 body**，不要把整份文件缓冲进 RAM。 |
+| 5 | `recv_wait_timeout=60` 是「单次 recv」超时 | 不是整个上传的总时长；handler 循环需自行处理断开/超时，收尾统一 `esp_ota_abort`。 |
+| 6 | 首次切双槽确认 otadata 为擦除态 | 本工程从未 OTA 过，`idf.py flash` 不动 otadata（本就是 0xFF），无需专门处理；但以后若从旧 `factory` 表升级，先擦 otadata 再烧，避免陈旧状态干扰 rollback。 |
+| 7 | 「崩溃在 mark 之后」是固有盲区 | 新固件已 mark 后再崩溃不会回滚、远程无法自救（§5 已诚实列出）。验收时把「崩溃包回滚」当**必测项**（§4.6）。 |
+| 8 | 安全细节 | `X-OTA-Token` 在开放热点 + 明文 HTTP 下等同明文传输，仅内网学习可接受；SoftAP 建议设 `WIFI_PASS`。MQTT 触发建议**不 retain**，避免开机重复触发升级。 |
+| 9 | 可选洁癖 | `partitions_4mb.csv` 实为「16MB Flash + 4MB 槽」，文件名有误导性，可改名（非必须）。 |
+
+---
+
 ## 附录：关键文件一览（实现时会动到）
 
 | 文件 | 动作 |

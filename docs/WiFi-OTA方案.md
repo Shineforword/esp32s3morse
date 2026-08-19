@@ -62,14 +62,23 @@ ota_1,    app,  ota_1,   ,        4M,
 
 ```text
 esp_ota_get_next_update_partition()
-  → esp_ota_begin()
-  → 循环 esp_ota_write()
-  → esp_ota_end()                 // 失败则 abort，不切换启动分区
-  → esp_ota_set_boot_partition()  // 仅 end 成功后
+  →（可选）先读 body 前若干字节：至少 magic 0xE9，错文件秒拒
+  → esp_ota_begin(part, image_size, &handle)   // 见下方 image_size 约定
+  → 循环 esp_ota_write()                       // 边收边写，勿整包进 RAM
+  → esp_ota_end()                              // 失败则 abort，不切换启动分区
+  → esp_ota_set_boot_partition()               // 仅 end 成功后
   → esp_restart()
 ```
 
-`esp_ota_end` 会检查镜像魔数、芯片类型、完整性等。故意传坏文件时必须：**旧固件继续运行**。
+**`esp_ota_begin` 的 `image_size`（ESP-IDF v5.1.2，无 `ESP_OTA_WITH_SIZE` 宏）：**
+
+| 场景 | 传入值 |
+|------|--------|
+| 网页上传且有可靠 `Content-Length` | 直接传该字节数；大于 OTA 槽则 `begin` 前拒绝 |
+| 长度未知（流式） | `OTA_WITH_SEQUENTIAL_WRITES`（边写边擦，推荐） |
+| 避免默认整槽擦 | 不要无必要地用 `OTA_SIZE_UNKNOWN`（更慢、磨损更大） |
+
+`esp_ota_end` 做最终校验（镜像结构、芯片类型、完整性等）。写前 magic 只是快拒；**完整正确性仍依赖 `esp_ota_end`**。故意传坏文件时必须：**旧固件继续运行**。
 
 #### 层 3：App Rollback（menuconfig 必开）
 
@@ -88,7 +97,9 @@ idf.py menuconfig
    esp_ota_mark_app_valid_cancel_rollback();
    ```
 
-   建议封装为 `ota_mark_valid()`，调用时机：**SoftAP（及可选 STA）已 init，且 `morse_http_start()` 成功之后**。  
+   建议封装为 `ota_mark_valid()`。  
+   **最低要求：** SoftAP 已 init，且 `morse_http_start()` 成功之后（保证仍可用网页上传救回）。  
+   **若主运维路径是服务器 OTA / MQTT：** 更严一点，等 STA 拿到局域网 IP 再 mark，避免「能开热点但上不了局域网」的半活固件被确认有效。  
    **不要**一进 `app_main` 就 mark——那样崩溃固件也会被当成有效，rollback 形同虚设。
 3. 若新固件在 mark 之前崩溃/看门狗复位，bootloader 判定验证失败 → **自动回滚到上一槽**。
 
@@ -160,7 +171,8 @@ config.max_uri_handlers = 28;    // 现有 24，预留新路由
 `main/main.c` 启动顺序建议：
 
 ```text
-nvs →（外设）→ wifi_softap_init → morse_http_start → ota_mark_valid()
+nvs →（外设）→ wifi_softap_init → morse_http_start
+  →（若主路径含服务器 OTA：可选 wifi_sta_wait_for_ip）→ ota_mark_valid()
 ```
 
 ### 1.5 服务器触发所需配置（与现 MQTT 共用 STA）
@@ -350,7 +362,7 @@ Node-RED：`mqtt out` 节点同一 topic 即可一键升级。
                                                                        │
                                                          pending verify │
                                                                        ▼
-                                              WiFi+HTTP 就绪 → mark_valid
+                                              SoftAP+HTTP 就绪（+可选 STA IP）→ mark_valid
                                               崩溃未 mark → bootloader 回滚旧槽
 ```
 
@@ -387,8 +399,8 @@ Node-RED：`mqtt out` 节点同一 topic 即可一键升级。
 1. 改 `partitions_4mb.csv`；menuconfig **打开** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`（及内网所需的 `CONFIG_OTA_ALLOW_HTTP`）。
 2. USB 全量烧录，确认双槽启动正常。
 3. 实现 `components/ota`（含 abort / 仅 end 成功才切槽）+ `POST /api/ota` 网页上传。
-4. `main` 在 WiFi + HTTP 就绪后调用 `ota_mark_valid()`。
-5. SoftAP 自测：好包升级成功；坏包不切槽；故意崩溃包验证 rollback。
+4. `main` 在 SoftAP + HTTP 就绪后调用 `ota_mark_valid()`（主路径含服务器 OTA 时再等 STA IP）。
+5. SoftAP 自测：好包升级成功；坏包不切槽；**故意崩溃包验证 rollback（必测）**。
 6. 实现 `ota_from_url` + `POST /api/ota_url`；香橙派托管验证。
 7. MQTT 订阅 `esp32s3/ota`，`mosquitto_pub` 验证。
 8. 版本号展示、`DEMO_OTA`、口令与文档收尾。
@@ -433,7 +445,7 @@ const esp_app_desc_t *d = esp_app_get_description();
 - [ ] `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`。
 - [ ] SoftAP 网页上传好包 → 重启 → 版本与功能正确 → 日志有 mark_valid。
 - [ ] 故意传坏文件 → `esp_ota_end` 失败且**不**切换启动分区，旧固件仍可运行。
-- [ ] （可选强化）故意升「启动即崩溃」包 → 复位后自动回到旧槽。
+- [ ] **必测：** 故意升「启动即崩溃」包（未 mark）→ 复位后自动回到旧槽。
 - [ ] 香橙派 + `POST /api/ota_url` 成功。
 - [ ] `mosquitto_pub -t esp32s3/ota ...` 成功（若已实现 MQTT 触发）。
 - [ ] USB 仍可随时 `flash` 覆盖。
@@ -459,9 +471,9 @@ const esp_app_desc_t *d = esp_app_get_description();
 1. 分区必须是双 OTA，禁止继续用单 `factory` 做 WiFi 升级。  
 2. `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` 为发布默认。  
 3. 仅 `esp_ota_end == ESP_OK` 后才 `set_boot_partition` + `restart`。  
-4. `ota_mark_valid()` 放在 WiFi + HTTP（关键远程路径）成功之后。  
+4. `ota_mark_valid()` 放在 SoftAP + HTTP 成功之后；主路径含服务器 OTA 时再等 STA 获 IP。  
 5. 开发机保留上一份已知好 `.bin` + USB 线。  
-6. 验收必须包含「坏包不切槽」；建议包含「崩溃包回滚」。
+6. 验收必须包含「坏包不切槽」与「崩溃包回滚」（§4.6）。
 
 ---
 
@@ -471,15 +483,16 @@ const esp_app_desc_t *d = esp_app_get_description();
 
 | # | 修正点 | 说明与做法 |
 |---|--------|-----------|
-| 1 | **版本号当前不可用，先补** | 根 `CMakeLists.txt` 现为 `project(esp32s3_morse)`（无 VERSION），`CONFIG_APP_PROJECT_VER_FROM_CONFIG` 未开 → `esp_app_desc` 的 `d->version` 恒为 `"1"`，OTA 页版本显示（§4.2）无意义。做法：`project(esp32s3_morse VERSION 0.1.0)`，或 menuconfig 开 `CONFIG_APP_PROJECT_VER_FROM_CONFIG` 手填。 |
-| 2 | `esp_ota_begin` 建议带 `ESP_OTA_WITH_SIZE` | 网页上传时从 `Content-Length` 取大小传入；镜像比槽大时 `begin` 即拒绝，避免写满槽才失败，截断流也能更早判定。 |
-| 3 | 上传路径先验镜像头再写 | 写前先读前 8 字节（magic `0xE9` + chip id），错文件秒拒、少写垃圾进槽、减少 flash 磨损；`esp_ota_end` 仍作最终兜底。 |
+| 1 | **版本号当前不可用，先补** | 根 `CMakeLists.txt` 现为 `project(esp32s3_morse)`（无 VERSION），`CONFIG_APP_PROJECT_VER_FROM_CONFIG` 未开 → `esp_app_desc` 的 `d->version` 多为 `"1"`，OTA 页版本显示（§4.2）无意义。做法：`project(esp32s3_morse VERSION 0.1.0)`，或 menuconfig 开 `CONFIG_APP_PROJECT_VER_FROM_CONFIG` 手填。 |
+| 2 | **`esp_ota_begin` 传入真实大小或顺序写宏** | IDF v5.1.2 **无** `ESP_OTA_WITH_SIZE`。有 `Content-Length` 时传入该字节数（超槽则拒绝）；未知长度用 `OTA_WITH_SEQUENTIAL_WRITES`；避免无必要使用 `OTA_SIZE_UNKNOWN` 整槽擦。详见 §1.2 层 2。 |
+| 3 | 上传路径先验 magic 再写 | 至少校验首字节 magic `0xE9` 后秒拒错文件；芯片/结构完整性以 `esp_ota_end` 为准，勿过度解读「前 8 字节 = 完整头校验」。 |
 | 4 | **httpd 单线程：上传期间其它页面阻塞** | `esp_http_server` 默认单工作线程，上传几十秒内 `/morse`、`/music` 等全部无响应（学习工程可接受，但应知晓）。OTA handler 必须**边收边写、循环读完整 body**，不要把整份文件缓冲进 RAM。 |
 | 5 | `recv_wait_timeout=60` 是「单次 recv」超时 | 不是整个上传的总时长；handler 循环需自行处理断开/超时，收尾统一 `esp_ota_abort`。 |
 | 6 | 首次切双槽确认 otadata 为擦除态 | 本工程从未 OTA 过，`idf.py flash` 不动 otadata（本就是 0xFF），无需专门处理；但以后若从旧 `factory` 表升级，先擦 otadata 再烧，避免陈旧状态干扰 rollback。 |
-| 7 | 「崩溃在 mark 之后」是固有盲区 | 新固件已 mark 后再崩溃不会回滚、远程无法自救（§5 已诚实列出）。验收时把「崩溃包回滚」当**必测项**（§4.6）。 |
+| 7 | 「崩溃在 mark 之后」是固有盲区 | 新固件已 mark 后再崩溃不会回滚、远程无法自救（§5）。「崩溃包回滚」为 **§4.6 必测项**。 |
 | 8 | 安全细节 | `X-OTA-Token` 在开放热点 + 明文 HTTP 下等同明文传输，仅内网学习可接受；SoftAP 建议设 `WIFI_PASS`。MQTT 触发建议**不 retain**，避免开机重复触发升级。 |
-| 9 | 可选洁癖 | `partitions_4mb.csv` 实为「16MB Flash + 4MB 槽」，文件名有误导性，可改名（非必须）。 |
+| 9 | mark 时机按主路径收紧 | 最低：SoftAP + HTTP 就绪后 mark；主路径为服务器/MQTT 时，再等 STA 获 IP（§1.2 层 3）。 |
+| 10 | 可选洁癖 | `partitions_4mb.csv` 实为「16MB Flash + 4MB 槽」，文件名有误导性；若改名须同步 `sdkconfig` 的 `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME`（非必须）。 |
 
 ---
 
@@ -492,7 +505,7 @@ const esp_app_desc_t *d = esp_app_get_description();
 | `components/web/morse_http.c` | 路由与页面 |
 | `components/web/CMakeLists.txt` | `REQUIRES ota` |
 | `components/board/include/app_config.h` | OTA URL / topic / token |
-| `main/main.c` | HTTP 就绪后 `ota_mark_valid()` |
+| `main/main.c` | SoftAP+HTTP（+可选 STA IP）就绪后 `ota_mark_valid()` |
 | `main/Kconfig.projbuild` | 可选 `DEMO_OTA` |
 | `sdkconfig`（menuconfig） | **必开** rollback；内网开 `CONFIG_OTA_ALLOW_HTTP` |
 | 香橙派 `~/esp32s3/ota/` + `http.server` / Mosquitto | 升级源与触发 |

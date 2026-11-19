@@ -85,6 +85,10 @@ void wifi_softap_init(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    /* 先设模式，再写接口配置：v5.x 的 set_config 会校验当前 mode，
+     * 顺序反了会返回 ESP_ERR_WIFI_MODE（0x3005）并 abort。 */
+    ESP_ERROR_CHECK(esp_wifi_set_mode(use_sta ? WIFI_MODE_APSTA : WIFI_MODE_AP));
+
     wifi_config_t wifi_config = {
         .ap = {
             .ssid = WIFI_SSID,
@@ -108,9 +112,6 @@ void wifi_softap_init(void)
         strncpy((char *)sta_cfg.sta.password, MQTT_STA_WIFI_PASS, sizeof(sta_cfg.sta.password) - 1);
         sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());

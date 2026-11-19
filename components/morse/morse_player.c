@@ -147,8 +147,8 @@ static void morse_player_task(void *arg)
 {
     (void)arg;
     play_msg_t msg;
-    /* 首帧黄灯也在锁内：否则与 morse_player_init 末尾的 led_idle_yellow 并发刷新，
-     * 两次 rmt_enable 抢 RMT 通道会报 channel not in init state。 */
+    /* 首帧黄灯只在此任务、互斥锁内完成。曾在 init 末尾再刷一次，与本任务并发
+     * led_strip_refresh / rmt_enable，会报 channel not in init state。 */
     xSemaphoreTake(s_led_mutex, portMAX_DELAY);
     morse_buzzer_force_idle();
     led_idle_yellow();
@@ -194,7 +194,7 @@ void morse_player_init(led_strip_handle_t strip)
         return;
     }
     xTaskCreate(morse_player_task, "morse_player", 4096, NULL, 5, NULL);
-    /* 首帧黄灯改由播放任务在互斥锁内完成，避免与 main 并发刷新 RMT 通道 */
+    /* 不在此处刷灯：首帧黄灯由播放任务在互斥锁内完成，避免与任务并发抢 RMT */
 }
 
 bool morse_player_preview_symbol(char sym)
